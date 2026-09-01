@@ -9,7 +9,7 @@ from __future__ import annotations
 import struct
 import sys
 
-from . import clipboard, markup, notify, ocr, paths, shot, textwindow
+from . import clipboard, markup, notify, ocr, paths, shortcuts, shot, textwindow
 
 
 def png_size(data: bytes) -> tuple[int, int]:
@@ -53,8 +53,29 @@ def cmd_ocr() -> int:
     return textwindow.show(lambda: ocr.recognize(png))
 
 
+def cmd_install() -> int:
+    print(shortcuts.install())
+    return 0
+
+
+def cmd_uninstall() -> int:
+    print(shortcuts.uninstall())
+    return 0
+
+
+def cmd_status() -> int:
+    print(shortcuts.status())
+    return 0
+
+
 def main(argv: list[str]) -> int:
-    commands = {"shot": cmd_shot, "ocr": cmd_ocr}
+    commands = {
+        "shot": cmd_shot,
+        "ocr": cmd_ocr,
+        "install": cmd_install,
+        "uninstall": cmd_uninstall,
+        "status": cmd_status,
+    }
     if len(argv) < 2 or argv[1] not in commands:
         print(f"用法：python3 -m snapocr {{{'|'.join(commands)}}}", file=sys.stderr)
         return 64
