@@ -46,7 +46,7 @@ Architecture: $ARCH
 Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, python3-cairo,
  wl-clipboard, tesseract-ocr, tesseract-ocr-eng, tesseract-ocr-chi-sim,
  tesseract-ocr-chi-tra
-Maintainer: Jesse Xu <888468+jesseXu@users.noreply.github.com>
+Maintainer: Jesse Xu <jesse0628@gmail.com>
 Description: 截图与取字小工具（COSMIC / Wayland）
  框选一块区域，图片直接进剪贴板；或框选一块区域识别其中的文字，
  结果落在一个可编辑的窗口里。附带钢笔、箭头、数字标记点的标注编辑器。
