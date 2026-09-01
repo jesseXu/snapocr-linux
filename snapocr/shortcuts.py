@@ -44,15 +44,20 @@ _MARK = "snapocr"
 def _launcher() -> Path:
     """定位启动器。
 
-    装成 .deb 后在 /usr/bin/snapocr；从源码目录直接跑时在 ./bin/snapocr。
     快捷键配置里必须写绝对路径 —— cosmic-comp 启动命令时不带用户的 PATH。
+
+    **先找源码目录、再找系统路径**，顺序不能反：源码目录里跑的时候要注册的
+    显然是眼前这份代码，若优先返回 /usr/bin 就会把快捷键指到系统里那份可能
+    已经过时的安装上，改了代码却怎么按都没变化。
+    装成 .deb 之后本模块位于 dist-packages，其上层没有 bin/snapocr，
+    自然会落到 /usr/bin —— 两种场景都对。
     """
-    packaged = Path("/usr/bin/snapocr")
-    if packaged.is_file():
-        return packaged
     local = Path(__file__).resolve().parent.parent / "bin" / "snapocr"
     if local.is_file():
         return local
+    packaged = Path("/usr/bin/snapocr")
+    if packaged.is_file():
+        return packaged
     found = shutil.which("snapocr")
     if found:
         return Path(found)
