@@ -1,10 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=SnapOCR 截图
-Name[en]=SnapOCR Screenshot
-Comment=框选一块区域，图片直接进剪贴板
+Name=SnapOCR Screenshot
+Comment=Select a region; the image goes straight to the clipboard
 Exec=snapocr shot
 Icon=applets-screenshooter
 Terminal=false
 Categories=Utility;Graphics;
-Keywords=screenshot;capture;截图;
+Keywords=screenshot;capture;clipboard;

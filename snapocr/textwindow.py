@@ -20,13 +20,13 @@ _APP_ID = "com.jessezoo.snapocr"
 
 class _ResultWindow(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application, recognize):
-        super().__init__(application=app, title="识别结果")
+        super().__init__(application=app, title="Recognized Text")
         self.set_default_size(760, 520)
         self._recognize = recognize
 
         header = Gtk.HeaderBar()
         self.set_titlebar(header)
-        self._copy_button = Gtk.Button(label="全部复制")
+        self._copy_button = Gtk.Button(label="Copy All")
         self._copy_button.add_css_class("suggested-action")
         self._copy_button.connect("clicked", self._on_copy)
         self._copy_button.set_sensitive(False)
@@ -45,14 +45,14 @@ class _ResultWindow(Gtk.ApplicationWindow):
             right_margin=12,
         )
         self._buffer = self._view.get_buffer()
-        self._buffer.set_text("识别中…")
+        self._buffer.set_text("Recognizing…")
         self._view.set_sensitive(False)
         scroller.set_child(self._view)
         box.append(scroller)
 
         self._status = Gtk.Label(xalign=0, margin_start=12, margin_end=12, margin_top=6, margin_bottom=6)
         self._status.add_css_class("dim-label")
-        self._status.set_text("正在识别…")
+        self._status.set_text("Recognizing…")
         box.append(self._status)
 
         # Esc 关闭，和框选浮层保持一致的退出习惯。
@@ -73,11 +73,11 @@ class _ResultWindow(Gtk.ApplicationWindow):
         self._view.set_sensitive(True)
         if error is not None:
             self._buffer.set_text("")
-            self._status.set_text(f"识别失败：{error}")
+            self._status.set_text(f"Recognition failed: {error}")
             return False
         if not text.strip():
             self._buffer.set_text("")
-            self._status.set_text("没有识别到文字")
+            self._status.set_text("No text recognized")
             return False
 
         self._buffer.set_text(text)
@@ -86,11 +86,11 @@ class _ResultWindow(Gtk.ApplicationWindow):
         # 想要局部就在框里选了再按「全部复制」旁边的 Ctrl+C。
         try:
             clipboard.write_text(text)
-            note = "已全部复制到剪贴板"
+            note = "all text copied to clipboard"
         except Exception:
-            note = "自动复制失败，可点右上角按钮"
+            note = "auto-copy failed — use Copy All"
         chars = len(text.replace("\n", ""))
-        self._status.set_text(f"{chars} 字 · {note} · 可直接编辑后再复制 · Esc 关闭")
+        self._status.set_text(f"{chars} chars · {note} · edit freely, then copy · Esc to close")
         return False
 
     def _on_copy(self, _button: Gtk.Button) -> None:
@@ -98,9 +98,9 @@ class _ResultWindow(Gtk.ApplicationWindow):
         text = self._buffer.get_text(start, end, False)
         try:
             clipboard.write_text(text)
-            self._status.set_text("已复制到剪贴板")
+            self._status.set_text("Copied to clipboard")
         except Exception as exc:
-            self._status.set_text(f"复制失败：{exc}")
+            self._status.set_text(f"Copy failed: {exc}")
 
     def _on_key(self, _c, keyval, _code, _state) -> bool:
         if keyval == 0xFF1B:  # Escape

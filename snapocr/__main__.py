@@ -13,23 +13,25 @@ import sys
 from . import clipboard, doctor, markup, notify, ocr, paths, shortcuts, shot, textwindow
 
 
-USAGE = """用法：snapocr <命令>
+USAGE = """Usage: snapocr <command>
 
-  shot                     框选截图 → 图片进剪贴板
-  ocr                      框选取字 → 可编辑的结果窗口
-  markup [文件]            框选并标注（钢笔 / 箭头 / 数字标记点）
-                           给文件路径则标注该图片
-                           --clipboard 标注剪贴板里的图
+  shot                  select a region -> image goes to the clipboard
+  ocr                   select a region -> text in an editable window
+  markup [FILE]         select a region and annotate it
+                        (pen / arrow / numbered markers)
+                        FILE annotates that image instead
+                        --clipboard annotates the image in the clipboard
 
-  install [--shot 键] [--ocr 键] [--markup 键]
-                           注册全局快捷键
-                           默认 Ctrl+Alt+A / Ctrl+Alt+S / Ctrl+Alt+E
-                           例：snapocr install --shot "Super+Shift+A"
-                           装好后也可在「设置 → 键盘 → 键盘快捷键 →
-                           自定义快捷键」里直接改键位
-  uninstall                移除本工具注册的快捷键
-  status                   查看快捷键注册情况
-  doctor                   检查依赖是否齐全"""
+  install [--shot KEY] [--ocr KEY] [--markup KEY]
+                        register the global shortcuts
+                        defaults: Ctrl+Alt+A / Ctrl+Alt+S / Ctrl+Alt+E
+                        e.g. snapocr install --shot "Super+Shift+A"
+                        you can also rebind them afterwards in
+                        Settings -> Keyboard -> Keyboard Shortcuts ->
+                        Custom Shortcuts
+  uninstall             remove the shortcuts this tool registered
+  status                show which shortcuts are registered
+  doctor                check that all dependencies are present"""
 
 
 def png_size(data: bytes) -> tuple[int, int]:
@@ -75,13 +77,13 @@ def cmd_markup(args: list[str]) -> int:
             ["wl-paste", "--type", "image/png"], capture_output=True, timeout=10
         )
         if proc.returncode != 0 or not proc.stdout:
-            print("剪贴板里没有图片", file=sys.stderr)
+            print("No image in the clipboard", file=sys.stderr)
             return 1
         png = proc.stdout
     elif args:
         path = pathlib.Path(args[0]).expanduser()
         if not path.is_file():
-            print(f"找不到文件：{path}", file=sys.stderr)
+            print(f"File not found: {path}", file=sys.stderr)
             return 1
         png = path.read_bytes()
     else:
@@ -110,12 +112,12 @@ def cmd_install(args: list[str]) -> int:
             keys[args[i][2:]] = args[i + 1]
             i += 2
             continue
-        print(f"无法识别的参数：{args[i]}", file=sys.stderr)
+        print(f"Unknown option: {args[i]}", file=sys.stderr)
         return 64
     try:
         print(shortcuts.install(keys))
     except ValueError as exc:
-        print(f"错误：{exc}", file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         return 64
     return 0
 
@@ -155,10 +157,10 @@ def main(argv: list[str]) -> int:
     except Exception as exc:  # noqa: BLE001
         # 由快捷键启动时没人看得见 stderr,静默失败比报错更糟。
         # 通知在这里正合适:不需要按钮,而且会留在通知中心里等人看。
-        print(f"错误：{exc}", file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         if argv[1] in ("shot", "ocr", "markup"):
             try:
-                notify.show("SnapOCR 出错了", str(exc), timeout_ms=8000)
+                notify.show("SnapOCR error", str(exc), timeout_ms=8000)
             except Exception:  # noqa: BLE001
                 pass
         return 1

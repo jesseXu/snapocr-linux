@@ -26,7 +26,7 @@ def shot_binary() -> str:
     if found:
         return found
     raise FileNotFoundError(
-        "找不到 snapocr-shot。先构建：cargo build --release --manifest-path snapocr-shot/Cargo.toml"
+        "snapocr-shot not found — build it: cargo build --release --manifest-path snapocr-shot/Cargo.toml"
     )
 
 

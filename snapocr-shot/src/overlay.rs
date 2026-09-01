@@ -147,10 +147,10 @@ pub struct App {
 impl App {
     pub fn new(globals: &GlobalList, qh: &QueueHandle<Self>) -> Result<Self> {
         Ok(App {
-            compositor: CompositorState::bind(globals, qh).context("合成器缺少 wl_compositor")?,
+            compositor: CompositorState::bind(globals, qh).context("compositor lacks wl_compositor")?,
             layer_shell: LayerShell::bind(globals, qh)
-                .context("合成器缺少 zwlr_layer_shell_v1")?,
-            shm: Shm::bind(globals, qh).context("合成器缺少 wl_shm")?,
+                .context("compositor lacks zwlr_layer_shell_v1")?,
+            shm: Shm::bind(globals, qh).context("compositor lacks wl_shm")?,
             // 可选：没有就退回合成器默认光标，不影响主流程。
             cursor_shape: globals.bind(qh, 1..=2, ()).ok(),
             cursor_device: None,
@@ -197,7 +197,7 @@ impl App {
     pub fn report_outputs(&self) {
         for (i, output) in self.output_state.outputs().enumerate() {
             let Some(info) = self.output_state.info(&output) else {
-                println!("屏幕 {i}: 信息不可用");
+                println!("output {i}: no info available");
                 continue;
             };
             let mode = info
@@ -214,15 +214,15 @@ impl App {
                 (Some((lw, _)), Some(m)) if lw > 0 => {
                     let r = m.dimensions.0 as f64 / lw as f64;
                     if (r - r.round()).abs() < 1e-6 {
-                        format!("{}x（整除，OK）", r.round() as i32)
+                        format!("{}x (integral, OK)", r.round() as i32)
                     } else {
-                        format!("{r:.3}x（非整数缩放，layer surface 会对不齐）")
+                        format!("{r:.3}x (fractional — layer surfaces will not line up)")
                     }
                 }
                 _ => "?".into(),
             };
             println!(
-                "屏幕 {i}: {} | 物理 {mode} | 逻辑 {logical} | wl_output scale {} | 换算 {integral}",
+                "output {i}: {} | physical {mode} | logical {logical} | wl_output scale {} | ratio {integral}",
                 info.name.clone().unwrap_or_else(|| "?".into()),
                 info.scale_factor
             );
@@ -315,7 +315,7 @@ impl App {
             match SlotPool::new(len, &self.shm) {
                 Ok(p) => t.pool = Some(p),
                 Err(e) => {
-                    eprintln!("toast 分配共享内存失败：{e}");
+                    eprintln!("toast: shared memory allocation failed: {e}");
                     return;
                 }
             }
@@ -324,7 +324,7 @@ impl App {
         let (buffer, data) = match pool.create_buffer(w, h, stride, wl_shm::Format::Argb8888) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("toast 创建缓冲区失败：{e}");
+                eprintln!("toast: buffer creation failed: {e}");
                 return;
             }
         };
@@ -390,7 +390,7 @@ impl App {
         surface.set_buffer_scale(scale);
         surface.damage_buffer(0, 0, w, h);
         if let Err(e) = buffer.attach_to(&surface) {
-            eprintln!("toast attach 失败：{e}");
+            eprintln!("toast: buffer attach failed: {e}");
             return;
         }
         surface.commit();
@@ -411,7 +411,7 @@ impl App {
         self.overlays.clear();
         self.toast = None;
         if let Err(e) = conn.roundtrip() {
-            eprintln!("收尾 roundtrip 失败：{e}");
+            eprintln!("teardown roundtrip failed: {e}");
         }
         Ok(result)
     }
@@ -513,7 +513,7 @@ impl App {
             match SlotPool::new(len, &self.shm) {
                 Ok(p) => self.overlays[index].pool = Some(p),
                 Err(e) => {
-                    eprintln!("分配共享内存失败：{e}");
+                    eprintln!("shared memory allocation failed: {e}");
                     return;
                 }
             }
@@ -529,7 +529,7 @@ impl App {
         let (buffer, canvas) = match pool.create_buffer(w, h, stride, wl_shm::Format::Xrgb8888) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("创建缓冲区失败：{e}");
+                eprintln!("buffer creation failed: {e}");
                 return;
             }
         };
@@ -560,7 +560,7 @@ impl App {
         surface.set_buffer_scale(o.scale().round().max(1.0) as i32);
         surface.damage_buffer(0, 0, w, h);
         if let Err(e) = buffer.attach_to(&surface) {
-            eprintln!("attach 缓冲区失败：{e}");
+            eprintln!("buffer attach failed: {e}");
             return;
         }
         surface.commit();

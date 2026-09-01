@@ -37,11 +37,11 @@ fn main() {
     match run() {
         Ok(true) => {}
         Ok(false) => {
-            eprintln!("已取消");
+            eprintln!("Cancelled");
             std::process::exit(2);
         }
         Err(e) => {
-            eprintln!("错误：{e:#}");
+            eprintln!("Error: {e:#}");
             std::process::exit(1);
         }
     }
@@ -58,11 +58,11 @@ fn run() -> Result<bool> {
     let timeout = watchdog_secs();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(timeout));
-        eprintln!("看门狗超时（{timeout}s），强制退出以免浮层卡住桌面");
+        eprintln!("Watchdog timeout ({timeout}s) — exiting so the overlay cannot lock up the desktop");
         std::process::exit(3);
     });
 
-    let conn = Connection::connect_to_env().context("连接 Wayland 合成器失败")?;
+    let conn = Connection::connect_to_env().context("could not connect to the Wayland compositor")?;
     let (globals, mut queue) = registry_queue_init::<overlay::App>(&conn)?;
     let qh = queue.handle();
 
@@ -102,7 +102,7 @@ fn run() -> Result<bool> {
             .unwrap_or_else(|| ".".into());
         for (output, name) in &app.outputs() {
             let shot = capture::capture_output(&conn, &globals, output)
-                .with_context(|| format!("抓取屏幕 {name} 失败"))?;
+                .with_context(|| format!("failed to capture output {name}"))?;
             let path = format!("{dir}/{name}.png");
             let file = std::fs::File::create(&path)?;
             write_png(std::io::BufWriter::new(file), &shot)?;
@@ -113,14 +113,14 @@ fn run() -> Result<bool> {
 
     let outputs = app.outputs();
     if outputs.is_empty() {
-        anyhow::bail!("没有找到任何屏幕");
+        anyhow::bail!("no outputs found");
     }
 
     // 先把所有屏冻结下来，再显示浮层——顺序反了就会把浮层自己拍进去。
     let mut shots = Vec::with_capacity(outputs.len());
     for (output, name) in &outputs {
         let shot = capture::capture_output(&conn, &globals, output)
-            .with_context(|| format!("抓取屏幕 {name} 失败"))?;
+            .with_context(|| format!("failed to capture output {name}"))?;
         shots.push((output.clone(), name.clone(), shot));
     }
 
@@ -131,12 +131,12 @@ fn run() -> Result<bool> {
 
     let cropped = app.crop(&sel);
     eprintln!(
-        "选区：{} 上 {}x{} @ ({}, {})",
-        app.output_name(&sel),
+        "selection: {}x{} at ({}, {}) on {}",
         cropped.width,
         cropped.height,
         sel.x,
-        sel.y
+        sel.y,
+        app.output_name(&sel)
     );
 
     if out_path == "-" {
@@ -146,7 +146,7 @@ fn run() -> Result<bool> {
         w.flush()?;
     } else {
         let file = std::fs::File::create(&out_path)
-            .with_context(|| format!("无法写入 {out_path}"))?;
+            .with_context(|| format!("cannot write {out_path}"))?;
         let mut w = std::io::BufWriter::new(file);
         write_png(&mut w, &cropped)?;
         w.flush()?;

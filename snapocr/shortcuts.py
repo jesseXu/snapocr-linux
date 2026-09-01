@@ -33,9 +33,9 @@ DEFAULT_KEYS = {
     "markup": "Ctrl+Alt+E",   # E = edit，沿用 macOS 版 toast 上的按键
 }
 _DESCRIPTIONS = {
-    "shot": "SnapOCR 截图",
-    "ocr": "SnapOCR 取字",
-    "markup": "SnapOCR 截图并标注",
+    "shot": "SnapOCR Screenshot",
+    "ocr": "SnapOCR Text Capture",
+    "markup": "SnapOCR Screenshot & Markup",
 }
 
 _MARK = "snapocr"
@@ -61,7 +61,7 @@ def _launcher() -> Path:
     found = shutil.which("snapocr")
     if found:
         return Path(found)
-    raise FileNotFoundError("找不到 snapocr 启动器")
+    raise FileNotFoundError("snapocr launcher not found")
 
 
 # 用户写法 → COSMIC 的修饰键名
@@ -81,7 +81,7 @@ def parse_key(spec: str) -> tuple[str, str]:
     """
     parts = [p.strip() for p in spec.replace("-", "+").split("+") if p.strip()]
     if not parts:
-        raise ValueError(f"无法解析快捷键：{spec!r}")
+        raise ValueError(f"cannot parse shortcut: {spec!r}")
     *mod_parts, key = parts
 
     mods: list[str] = []
@@ -89,12 +89,15 @@ def parse_key(spec: str) -> tuple[str, str]:
         canonical = _MOD_ALIASES.get(m.lower())
         if canonical is None:
             raise ValueError(
-                f"无法识别的修饰键 {m!r}，可用：Ctrl / Alt / Shift / Super"
+                f"unknown modifier {m!r} — use Ctrl / Alt / Shift / Super"
             )
         if canonical not in mods:
             mods.append(canonical)
     if not mods:
-        raise ValueError(f"{spec!r} 没有修饰键。无修饰键的全局快捷键会吞掉普通按键。")
+        raise ValueError(
+            f"{spec!r} has no modifier — an unmodified global shortcut "
+            "would swallow ordinary typing."
+        )
 
     key = key.lower() if len(key) == 1 else key
     return f"[{', '.join(mods)}]", key
@@ -151,27 +154,27 @@ def install(keys: dict[str, str] | None = None) -> str:
         f"  {keys[sub]:<16} {_DESCRIPTIONS[sub]}" for sub in keys
     )
     return (
-        f"已写入 {CONFIG}\n{detail}\n\n"
-        f"启动器：{_launcher()}\n"
-        "cosmic-comp 监听该文件，通常即刻生效。\n"
-        "之后想改键位，直接在「设置 → 键盘 → 键盘快捷键 → 自定义快捷键」里改即可。"
+        f"Wrote {CONFIG}\n{detail}\n\n"
+        f"Launcher: {_launcher()}\n"
+        "cosmic-comp watches this file, so it usually takes effect at once.\n"
+        "To rebind later: Settings -> Keyboard -> Keyboard Shortcuts -> Custom Shortcuts."
     )
 
 
 def uninstall() -> str:
     kept = _read_existing()
     if not CONFIG.is_file():
-        return "本来就没有配置文件，无需处理。"
+        return "Nothing to do — no config file."
     if kept:
         _write(kept)
-        return f"已从 {CONFIG} 移除 SnapOCR 的快捷键，保留了其它 {len(kept)} 条。"
+        return f"Removed SnapOCR shortcuts from {CONFIG}; kept {len(kept)} other entries."
     CONFIG.unlink()
-    return f"已删除 {CONFIG}（其中只有 SnapOCR 的快捷键）。"
+    return f"Deleted {CONFIG} (it held only SnapOCR shortcuts)."
 
 
 def status() -> str:
     if not CONFIG.is_file():
-        return "未注册（配置文件不存在）"
+        return "Not registered (no config file)"
     text = CONFIG.read_text(encoding="utf-8")
     ours = len(re.findall(re.escape(_MARK), text))
-    return f"{CONFIG}\n已注册 {ours} 条 SnapOCR 快捷键" if ours else "未注册"
+    return f"{CONFIG}\n{ours} SnapOCR shortcut(s) registered" if ours else "Not registered"

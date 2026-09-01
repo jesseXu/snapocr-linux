@@ -18,7 +18,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, Gio, Gtk  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from . import clipboard, paths  # noqa: E402
 
@@ -131,9 +131,36 @@ def _draw_marker(ctx: cairo.Context, ann: _Annotation, number: int, scale: float
     ctx.restore()
 
 
+# 工具栏图标用中性灰：自绘纹理不像 symbolic 图标那样会跟随主题重新着色，
+# 这个灰度在浅色和深色主题下都读得出来。
+_ICON_RGB = (0.54, 0.54, 0.56)
+_ICON_PX = 32
+
+
+def _tool_icon(tool: str) -> Gdk.Texture:
+    """用编辑器自己的绘制函数画出该工具的图标。
+
+    不用图标主题：一来「钢笔 / 箭头 / 编号标记点」没有公认的图标名，
+    二来主题里缺了对应图标时按钮会变成空白，用户无从下手。
+    自己画还有个好处 —— 图标就是这支工具的真实笔迹，不会画错。
+    """
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, _ICON_PX, _ICON_PX)
+    ctx = cairo.Context(surface)
+    if tool == PEN:
+        points = [(5, 21), (10, 11), (16, 21), (22, 11), (27, 17)]
+        _draw_stroke(ctx, _Annotation(PEN, points, _ICON_RGB), 1.0)
+    elif tool == ARROW:
+        _draw_stroke(ctx, _Annotation(ARROW, [(6, 25), (26, 7)], _ICON_RGB), 1.0)
+    else:
+        _draw_marker(ctx, _Annotation(MARKER, [(16, 16)], _ICON_RGB), 1, 1.0)
+    buf = io.BytesIO()
+    surface.write_to_png(buf)
+    return Gdk.Texture.new_from_bytes(GLib.Bytes.new(buf.getvalue()))
+
+
 class _MarkupWindow(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application, png: bytes):
-        super().__init__(application=app, title="标注")
+        super().__init__(application=app, title="Markup")
 
         self._source = cairo.ImageSurface.create_from_png(io.BytesIO(png))
         self._orig_w = self._source.get_width()
@@ -179,14 +206,14 @@ class _MarkupWindow(Gtk.ApplicationWindow):
 
     def _build_header(self) -> Gtk.HeaderBar:
         header = Gtk.HeaderBar()
-        undo = Gtk.Button(icon_name="edit-undo-symbolic", tooltip_text="撤销 (Ctrl+Z)")
+        undo = Gtk.Button(icon_name="edit-undo-symbolic", tooltip_text="Undo (Ctrl+Z)")
         undo.connect("clicked", lambda _b: self._undo())
         header.pack_start(undo)
 
-        save = Gtk.Button(label="保存")
+        save = Gtk.Button(label="Save")
         save.connect("clicked", lambda _b: self._save())
         header.pack_end(save)
-        copy = Gtk.Button(label="复制")
+        copy = Gtk.Button(label="Copy")
         copy.add_css_class("suggested-action")
         copy.connect("clicked", lambda _b: self._copy())
         header.pack_end(copy)
@@ -200,14 +227,15 @@ class _MarkupWindow(Gtk.ApplicationWindow):
         tools = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         tools.add_css_class("linked")
         first: Gtk.ToggleButton | None = None
-        # 用文字而非图标：钢笔/箭头/标记点这几个概念没有公认的图标，
-        # 而且图标主题缺失时按钮会变成空白，用户无从下手。
-        for tool, label, tip in (
-            (PEN, "钢笔", "按住拖动，自由手绘"),
-            (ARROW, "箭头", "从起点拖到终点，画一支箭头"),
-            (MARKER, "标记点", "单击放置，自动编号 1、2、3…"),
+        for tool, tip in (
+            (PEN, "Pen — press and drag to draw freehand"),
+            (ARROW, "Arrow — drag from start to end"),
+            (MARKER, "Marker — click to place, numbered automatically"),
         ):
-            btn = Gtk.ToggleButton(label=label, tooltip_text=tip)
+            image = Gtk.Image.new_from_paintable(_tool_icon(tool))
+            image.set_pixel_size(20)
+            btn = Gtk.ToggleButton(tooltip_text=tip)
+            btn.set_child(image)
             if first is None:
                 first = btn
                 btn.set_active(True)

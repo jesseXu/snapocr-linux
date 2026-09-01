@@ -55,13 +55,13 @@ def check() -> tuple[list[tuple[str, bool, str]], list[str]]:
         record("snapocr-shot", False, str(exc))
 
     wl = shutil.which("wl-copy")
-    record("wl-copy", bool(wl), wl or "缺失 —— 无法写剪贴板")
+    record("wl-copy", bool(wl), wl or "missing — clipboard unavailable")
 
     tess = shutil.which("tesseract")
-    record("tesseract", bool(tess), tess or "缺失 —— 无法识别文字")
+    record("tesseract", bool(tess), tess or "missing — OCR unavailable")
     langs = _tesseract_langs()
-    for lang, label in (("chi_sim", "简体中文"), ("chi_tra", "繁体中文"), ("eng", "英文")):
-        record(lang, lang in langs, f"{label}语言包" + ("" if lang in langs else " 缺失"))
+    for lang, label in (("chi_sim", "Simplified Chinese"), ("chi_tra", "Traditional Chinese"), ("eng", "English")):
+        record(lang, lang in langs, f"{label} language data" + ("" if lang in langs else " — missing"))
 
     try:
         import gi
@@ -69,16 +69,16 @@ def check() -> tuple[list[tuple[str, bool, str]], list[str]]:
         gi.require_version("Gtk", "4.0")
         from gi.repository import Gtk  # noqa: F401
 
-        record("GTK4", True, "结果窗口与标注编辑器可用")
+        record("GTK4", True, "result window and markup editor available")
     except Exception as exc:
-        record("GTK4", False, f"缺失：{exc}")
+        record("GTK4", False, f"missing: {exc}")
 
     try:
         import cairo
 
         record("cairo", True, f"pycairo {cairo.version}")
     except Exception as exc:
-        record("cairo", False, f"缺失：{exc}")
+        record("cairo", False, f"missing: {exc}")
 
     return results, missing
 
@@ -87,12 +87,12 @@ def report() -> str:
     results, missing = check()
     width = max(len(name) for name, _ok, _d in results)
     lines = [
-        f"  {'OK ' if ok else '缺失'}  {name:<{width}}  {detail}"
+        f"  {'OK  ' if ok else 'MISS'}  {name:<{width}}  {detail}"
         for name, ok, detail in results
     ]
     body = "\n".join(lines)
     if missing:
-        body += "\n\n补齐依赖：\n  sudo apt install " + " ".join(missing)
+        body += "\n\nInstall what is missing:\n  sudo apt install " + " ".join(missing)
     else:
-        body += "\n\n依赖齐全。"
+        body += "\n\nAll dependencies present."
     return body

@@ -14,7 +14,7 @@ def _require(tool: str) -> str:
     path = shutil.which(tool)
     if not path:
         raise ClipboardUnavailable(
-            f"缺少 {tool}，请安装：sudo apt install wl-clipboard"
+            f"{tool} not found — install it: sudo apt install wl-clipboard"
         )
     return path
 

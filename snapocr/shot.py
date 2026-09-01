@@ -30,9 +30,9 @@ def select_region() -> bytes:
         raise Cancelled()
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", "replace").strip()
-        raise RuntimeError(f"抓屏失败（退出码 {proc.returncode}）：{stderr}")
+        raise RuntimeError(f"capture failed (exit {proc.returncode}): {stderr}")
     if not proc.stdout:
-        raise RuntimeError("抓屏没有输出任何数据")
+        raise RuntimeError("capture produced no data")
     return proc.stdout
 
 

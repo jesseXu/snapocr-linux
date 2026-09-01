@@ -30,8 +30,8 @@ def recognize(png: bytes, langs: str = DEFAULT_LANGS, dictionary: bool = True) -
     exe = shutil.which("tesseract")
     if not exe:
         raise TesseractMissing(
-            "缺少 tesseract，请安装："
-            "sudo apt install tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-chi-tra"
+            "tesseract not found — install it: sudo apt install "
+            "tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-chi-tra"
         )
 
     cmd = [exe, "stdin", "stdout", "-l", langs]
@@ -43,7 +43,7 @@ def recognize(png: bytes, langs: str = DEFAULT_LANGS, dictionary: bool = True) -
     )
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", "replace").strip()
-        raise RuntimeError(f"tesseract 失败：{stderr}")
+        raise RuntimeError(f"tesseract failed: {stderr}")
 
     return _tidy(proc.stdout.decode("utf-8", "replace"))
 

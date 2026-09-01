@@ -54,11 +54,11 @@ pub fn capture_output(
     let source_mgr: ext_output_image_capture_source_manager_v1::ExtOutputImageCaptureSourceManagerV1 =
         globals
             .bind(&qh, 1..=1, ())
-            .context("合成器没有 ext_output_image_capture_source_manager_v1")?;
+            .context("compositor lacks ext_output_image_capture_source_manager_v1")?;
     let capture_mgr: ext_image_copy_capture_manager_v1::ExtImageCopyCaptureManagerV1 = globals
         .bind(&qh, 1..=1, ())
-        .context("合成器没有 ext_image_copy_capture_manager_v1")?;
-    let shm: wl_shm::WlShm = globals.bind(&qh, 1..=2, ()).context("合成器没有 wl_shm")?;
+        .context("compositor lacks ext_image_copy_capture_manager_v1")?;
+    let shm: wl_shm::WlShm = globals.bind(&qh, 1..=2, ()).context("compositor lacks wl_shm")?;
 
     let source = source_mgr.create_source(output, &qh, ());
     // Options::empty() = 不绘制光标。截图里不要鼠标指针。
@@ -74,22 +74,22 @@ pub fn capture_output(
     while !state.session_done {
         queue
             .blocking_dispatch(&mut state)
-            .context("等待 capture session 协商失败")?;
+            .context("capture session negotiation failed")?;
         if let Some(reason) = &state.frame_failed {
-            bail!("抓屏 session 被合成器中止：{reason}");
+            bail!("capture session stopped by the compositor: {reason}");
         }
     }
 
     let (width, height) = state
         .buffer_size
-        .context("合成器未提供 buffer_size，无法分配缓冲区")?;
+        .context("compositor did not report buffer_size")?;
     let format = pick_format(&state.shm_formats)?;
 
     let stride = width * 4;
     let len = (stride * height) as usize;
 
     // 用 memfd 做共享内存：合成器直接往里写像素。
-    let file = memfd_of_size(len).context("创建共享内存失败")?;
+    let file = memfd_of_size(len).context("could not create shared memory")?;
     let mmap = unsafe { memmap2::MmapMut::map_mut(&file)? };
     let pool = shm.create_pool(
         std::os::fd::AsFd::as_fd(&file),
@@ -115,10 +115,10 @@ pub fn capture_output(
     while !state.frame_ready && state.frame_failed.is_none() {
         queue
             .blocking_dispatch(&mut state)
-            .context("等待抓屏帧失败")?;
+            .context("waiting for the captured frame failed")?;
     }
     if let Some(reason) = state.frame_failed {
-        bail!("抓屏失败：{reason}");
+        bail!("capture failed: {reason}");
     }
 
     let pixels = to_rgba(&mmap[..len], width, height, format)?;
@@ -147,7 +147,7 @@ fn pick_format(offered: &[wl_shm::Format]) -> Result<wl_shm::Format> {
     PREFERRED
         .into_iter()
         .find(|f| offered.contains(f))
-        .ok_or_else(|| anyhow::anyhow!("合成器未提供可解码的 shm 格式，它给出的是：{offered:?}"))
+        .ok_or_else(|| anyhow::anyhow!("no decodable shm format offered; compositor offered: {offered:?}"))
 }
 
 /// 转成 PNG 要的 RGBA8。
@@ -164,7 +164,7 @@ fn to_rgba(src: &[u8], width: u32, height: u32, format: wl_shm::Format) -> Resul
         Argb8888 => (true, false),
         Xbgr8888 => (false, true),
         Abgr8888 => (false, false),
-        other => bail!("暂不支持的 shm 像素格式：{other:?}"),
+        other => bail!("unsupported shm pixel format: {other:?}"),
     };
     let n = (width * height) as usize;
     let mut out = vec![0u8; n * 4];
@@ -191,7 +191,7 @@ fn memfd_of_size(len: usize) -> Result<std::fs::File> {
     // MFD_CLOEXEC = 1
     let fd = unsafe { libc_memfd_create(name.as_ptr(), 1) };
     if fd < 0 {
-        bail!("memfd_create 失败：{}", std::io::Error::last_os_error());
+        bail!("memfd_create failed: {}", std::io::Error::last_os_error());
     }
     let file = unsafe { std::fs::File::from_raw_fd(fd) };
     file.set_len(len as u64)?;
