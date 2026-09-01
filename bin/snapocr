@@ -1,0 +1,6 @@
+#!/bin/sh
+# SnapOCR 启动器。绑到 COSMIC 自定义快捷键时用绝对路径指向这个脚本。
+#   snapocr shot   框选 → 图进剪贴板
+#   snapocr ocr    框选 → 识别文字
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+exec env PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 -m snapocr "$@"
