@@ -38,7 +38,7 @@ _DESCRIPTIONS = {
     "markup": "SnapOCR Screenshot & Markup",
 }
 
-_MARK = "snapocr"
+
 
 
 def _launcher() -> Path:
@@ -108,30 +108,70 @@ def _lines(keys: dict[str, str]) -> list[str]:
     out = []
     for sub, spec in keys.items():
         mods, key = parse_key(spec)
+        # description 的类型是 Option<String>，RON 里必须写成 Some("...")；
+        # 写裸字符串会让**整个文件**解析失败（cosmic-comp 日志:
+        # `shortcuts custom config error: RonSpanned(ExpectedOption ...)`），
+        # 于是三个快捷键一个都不生效。
         out.append(
             f'    (modifiers: {mods}, key: "{key}", '
-            f'description: "{_DESCRIPTIONS[sub]}"): Spawn("{exe} {sub}"),'
+            f'description: Some("{_DESCRIPTIONS[sub]}")): Spawn("{exe} {sub}"),'
         )
     return out
 
 
+def _split_entries(inner: str) -> list[str]:
+    """把 RON map 的内容切成一条条 `绑定: 动作`。
+
+    **不能按行切**：COSMIC 设置界面写出来的是多行缩进格式，一条记录跨好几行。
+    早先按行过滤的版本会把用户手工建的快捷键拦腰截断，只留下半个括号，
+    整个文件随之解析失败。这里按括号深度扫描，并跳过字符串字面量里的符号。
+    """
+    entries: list[str] = []
+    depth = 0
+    in_string = False
+    escaped = False
+    current: list[str] = []
+    for ch in inner:
+        current.append(ch)
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            entry = "".join(current[:-1]).strip()
+            if entry:
+                entries.append(entry)
+            current = []
+    tail = "".join(current).strip()
+    if tail:
+        entries.append(tail)
+    return entries
+
+
 def _read_existing() -> list[str]:
-    """读出用户已有的自定义快捷键行（剔除我们自己写过的）。"""
+    """读出用户已有的自定义快捷键（剔除我们自己写过的那几条）。"""
     if not CONFIG.is_file():
         return []
     text = CONFIG.read_text(encoding="utf-8").strip()
     if not text:
         return []
-    # 去掉最外层的 { }，按行保留内容。RON 是个 map，逐行处理足够安全：
-    # 我们只增删自己那两行，不去解析用户写的东西。
-    inner = text
-    if inner.startswith("{"):
-        inner = inner[1:]
-    if inner.endswith("}"):
-        inner = inner[:-1]
+    inner = text.removeprefix("{").removesuffix("}")
+    # 用描述文本认自己的条目，**不能**用命令里的 "snapocr" ——
+    # 用户自己建的快捷键命令里同样含这个词，那样会把人家的删掉。
+    ours = tuple(_DESCRIPTIONS.values())
     return [
-        line for line in inner.splitlines()
-        if line.strip() and _MARK not in line
+        f"    {e}," for e in _split_entries(inner)
+        if not any(mark in e for mark in ours)
     ]
 
 
@@ -176,5 +216,5 @@ def status() -> str:
     if not CONFIG.is_file():
         return "Not registered (no config file)"
     text = CONFIG.read_text(encoding="utf-8")
-    ours = len(re.findall(re.escape(_MARK), text))
+    ours = sum(text.count(d) for d in _DESCRIPTIONS.values())
     return f"{CONFIG}\n{ours} SnapOCR shortcut(s) registered" if ours else "Not registered"
