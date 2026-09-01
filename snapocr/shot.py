@@ -36,18 +36,21 @@ def select_region() -> bytes:
     return proc.stdout
 
 
-def toast(title: str, body: str = "", hint: str = "", timeout_ms: int = 4000) -> str | None:
+def toast(state: str, body: str = "", timeout_ms: int = 4000) -> str | None:
     """底部弹一条浮层，返回用户按了什么（"save" / "markup" / None）。
+
+    `state` 为 "copied"（带 S/E 提示）或 "saved"（只有一个对勾）。
 
     自绘而非用桌面通知：通知规范里的动作按钮各家实现差异极大 ——
     cosmic-notifications 实测不渲染，dunst、mako 也都不画按钮。而本工具
     已经硬依赖 layer-shell，自绘的可移植性成本是零。详见 DESIGN.md §8。
+
+    内容全部是图标 + 数字，没有需要翻译的文案 —— 也因此不需要字体
+    渲染这一整套依赖。
     """
-    cmd = [paths.shot_binary(), "--toast", "--title", title, "--timeout", str(timeout_ms)]
+    cmd = [paths.shot_binary(), "--toast", "--state", state, "--timeout", str(timeout_ms)]
     if body:
         cmd += ["--body", body]
-    if hint:
-        cmd += ["--hint", hint]
     try:
         code = subprocess.run(cmd, timeout=timeout_ms / 1000 + 10).returncode
     except subprocess.SubprocessError:

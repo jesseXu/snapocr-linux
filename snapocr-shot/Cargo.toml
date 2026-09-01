@@ -11,7 +11,4 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 smithay-client-toolkit = "0.21"
 memmap2 = "0.9"
 png = "0.17"
-# 自绘 toast 需要真正的文字渲染：字体发现 + 排版 + CJK 回退。
-# COSMIC 自己也用它，纯 Rust。
-cosmic-text = "0.19"
 anyhow = "1"

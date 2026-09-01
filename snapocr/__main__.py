@@ -51,11 +51,11 @@ def cmd_shot() -> int:
     clipboard.write_image(png)
 
     width, height = png_size(png)
-    action = shot.toast("已复制到剪贴板", f"{width} × {height}", "S 保存 · E 标注")
+    action = shot.toast("copied", f"{width} x {height}")
     if action == "save":
         target = paths.pictures_dir() / paths.screenshot_name()
         target.write_bytes(png)
-        shot.toast("已保存", target.name, timeout_ms=1600)
+        shot.toast("saved", timeout_ms=1600)
     elif action == "markup":
         return markup.show(png)
     return 0

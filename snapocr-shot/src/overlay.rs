@@ -58,9 +58,10 @@ const DIM_KEEP: u32 = 140; // 亮度 * 140/255 ≈ 0.55
 const BORDER: i64 = 2;
 /// 边框颜色（B, G, R）——COSMIC 强调色近似的蓝。
 const BORDER_BGR: [u8; 3] = [0xE0, 0x90, 0x30];
-/// toast 的逻辑尺寸与离屏边距。
-const TOAST_W: u32 = 460;
-const TOAST_H: u32 = 104;
+/// toast 的逻辑尺寸与离屏边距。「已复制」要多一行按键提示，故高一些。
+const TOAST_W: u32 = 240;
+const TOAST_H_COPIED: u32 = 98;
+const TOAST_H_SAVED: u32 = 66;
 const TOAST_MARGIN_BOTTOM: i32 = 90;
 
 /// 两帧之间的最小间隔（约 120fps）。
@@ -105,9 +106,10 @@ struct ToastSurface {
     /// 合成器建议的整数缩放。
     scale: i32,
     configured: bool,
-    title: String,
+    /// true = 已复制（带 S/E 提示），false = 已保存（只有一个对勾）。
+    copied: bool,
+    /// 尺寸文本，如 "1169 x 651"。空则不画。
     body: String,
-    hint: String,
 }
 
 pub struct App {
@@ -123,7 +125,6 @@ pub struct App {
     cursor_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
 
     toast: Option<ToastSurface>,
-    text: Option<toast::TextRenderer>,
     /// 用户在 toast 上按了什么：0 无，10 保存，11 标注。
     pub action: u8,
 
@@ -157,7 +158,6 @@ impl App {
             output_state: OutputState::new(globals, qh),
             seat_state: SeatState::new(globals, qh),
             toast: None,
-            text: None,
             action: 0,
             overlays: Vec::new(),
             shots: Vec::new(),
@@ -272,7 +272,8 @@ impl App {
     }
 
     /// 挂一条底部浮出的 toast，等用户按键。
-    pub fn add_toast(&mut self, qh: &QueueHandle<Self>, title: &str, body: &str, hint: &str) {
+    pub fn add_toast(&mut self, qh: &QueueHandle<Self>, copied: bool, body: &str) {
+        let height = if copied { TOAST_H_COPIED } else { TOAST_H_SAVED };
         let surface = self.compositor.create_surface(qh);
         let layer = self.layer_shell.create_layer_surface(
             qh,
@@ -281,7 +282,7 @@ impl App {
             Some("snapocr-toast"),
             None,
         );
-        layer.set_size(TOAST_W, TOAST_H);
+        layer.set_size(TOAST_W, height);
         layer.set_anchor(Anchor::BOTTOM);
         layer.set_margin(0, 0, TOAST_MARGIN_BOTTOM, 0);
         // 独占键盘：S / E 必须到得了我们手里，否则 toast 就只是个装饰。
@@ -291,12 +292,11 @@ impl App {
         self.toast = Some(ToastSurface {
             layer,
             pool: None,
-            logical: (TOAST_W, TOAST_H),
+            logical: (TOAST_W, height),
             scale: 1,
             configured: false,
-            title: title.to_string(),
+            copied,
             body: body.to_string(),
-            hint: hint.to_string(),
         });
     }
 
@@ -332,21 +332,58 @@ impl App {
 
         let s = scale as f32;
         let mut canvas = Canvas { data, width: w, height: h };
-        toast::fill_rounded_rect(&mut canvas, 0, 0, w, h, 14.0 * s, (18, 18, 20), 235);
+        toast::fill_rounded_rect(&mut canvas, 0, 0, w, h, 14.0 * s, (18, 18, 20), 238);
 
-        let text = self.text.get_or_insert_with(toast::TextRenderer::new);
-        let mut y = 16.0 * s;
-        for (content, size, rgb, alpha) in [
-            (t.title.as_str(), 16.0 * s, (255, 255, 255), 255u8),
-            (t.body.as_str(), 13.0 * s, (200, 200, 205), 255),
-            (t.hint.as_str(), 13.0 * s, (150, 150, 158), 255),
-        ] {
-            if content.is_empty() {
-                continue;
+        let white = (255, 255, 255);
+        let dim = (168, 168, 176);
+        let icon = 26.0 * s;
+
+        // 第一行：状态图标（+ 尺寸数字）。
+        let digits_scale = (2.0 * s).round().max(1.0) as i32;
+        let text_w = if t.body.is_empty() { 0 } else { toast::text_width(&t.body, digits_scale) };
+        let gap = 10.0 * s;
+        let row1_w = icon + if text_w > 0 { gap + text_w as f32 } else { 0.0 };
+        let mut x = (w as f32 - row1_w) / 2.0;
+        // 只有一行时垂直居中；两行时靠上留出按键提示的位置。
+        let y = if t.copied { 16.0 * s } else { (h as f32 - icon) / 2.0 };
+        if t.copied {
+            toast::icon_clipboard_check(&mut canvas, x, y, icon, white, 255);
+        } else {
+            toast::icon_check(&mut canvas, x, y, icon, white, 255);
+        }
+        if text_w > 0 {
+            x += icon + gap;
+            let th = 7 * digits_scale;
+            toast::draw_text(
+                &mut canvas, &t.body, x as i32,
+                (y + (icon - th as f32) / 2.0) as i32,
+                digits_scale, white, 255,
+            );
+        }
+
+        // 第二行：[S] 保存图标   [E] 笔图标。字母即按键，图标即含义 ——
+        // 两者合起来不需要任何文案，也就不需要翻译。
+        if t.copied {
+            let cap = 20.0 * s;
+            let mini = 18.0 * s;
+            let inner = 5.0 * s;
+            let between = 22.0 * s;
+            let cap_w = cap * 0.86;
+            let group = cap_w + inner + mini;
+            let total = group * 2.0 + between;
+            let mut gx = (w as f32 - total) / 2.0;
+            let gy = y + icon + 14.0 * s;
+            for (letter, is_save) in [("S", true), ("E", false)] {
+                let used = toast::draw_keycap(&mut canvas, letter, gx, gy, cap, 255);
+                let ix = gx + used + inner;
+                let iy = gy + (cap - mini) / 2.0;
+                if is_save {
+                    toast::icon_save(&mut canvas, ix, iy, mini, dim, 255);
+                } else {
+                    toast::icon_pen(&mut canvas, ix, iy, mini, dim, 255);
+                }
+                gx += group + between;
             }
-            let tw = text.measure(content, size);
-            text.draw(&mut canvas, content, (w as f32 - tw) / 2.0, y, size, rgb, alpha);
-            y += size * 1.5;
         }
 
         let surface = t.layer.wl_surface().clone();
@@ -531,38 +568,15 @@ impl App {
     }
 }
 
-/// 5x7 点阵字模：只要 0-9 和 ×。为画几个数字引入字体光栅化依赖
-/// （还要处理字体发现、fontconfig、CJK 回退）不划算。
-const GLYPHS: [(char, [u8; 7]); 11] = [
-    ('0', [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110]),
-    ('1', [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110]),
-    ('2', [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111]),
-    ('3', [0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110]),
-    ('4', [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010]),
-    ('5', [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110]),
-    ('6', [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110]),
-    ('7', [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000]),
-    ('8', [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110]),
-    ('9', [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100]),
-    ('x', [0b00000, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b00000]),
-];
-
 /// 在选区上方（放不下则下方）画出实时像素尺寸，如 `1920 x 1080`。
 #[allow(clippy::too_many_arguments)]
 fn draw_size_label(
-    canvas: &mut [u8],
-    w: i64,
-    h: i64,
-    x0: i64,
-    y0: i64,
-    _x1: i64,
-    sel_w: i64,
-    sel_h: i64,
-    scale: i64,
+    canvas: &mut [u8], w: i64, h: i64, x0: i64, y0: i64, _x1: i64,
+    sel_w: i64, sel_h: i64, scale: i64,
 ) {
-    let text: Vec<char> = format!("{sel_w} x {sel_h}").chars().collect();
+    let label = format!("{sel_w} x {sel_h}");
     let pad = 3 * scale;
-    let text_w = text.len() as i64 * 6 * scale - scale;
+    let text_w = toast::text_width(&label, scale as i32) as i64;
     let box_w = text_w + pad * 2;
     let box_h = 7 * scale + pad * 2;
 
@@ -584,37 +598,11 @@ fn draw_size_label(
         }
     }
 
-    // 白色字形
-    let mut cx = bx + pad;
-    for ch in text {
-        if ch == ' ' {
-            cx += 6 * scale;
-            continue;
-        }
-        if let Some((_, rows)) = GLYPHS.iter().find(|(c, _)| *c == ch) {
-            for (ry, row) in rows.iter().enumerate() {
-                for rx in 0..5i64 {
-                    if row & (1 << (4 - rx)) == 0 {
-                        continue;
-                    }
-                    for sy in 0..scale {
-                        for sx in 0..scale {
-                            let px = cx + rx * scale + sx;
-                            let py = by + pad + ry as i64 * scale + sy;
-                            if px < 0 || py < 0 || px >= w || py >= h {
-                                continue;
-                            }
-                            let i = ((py * w + px) * 4) as usize;
-                            canvas[i] = 255;
-                            canvas[i + 1] = 255;
-                            canvas[i + 2] = 255;
-                        }
-                    }
-                }
-            }
-        }
-        cx += 6 * scale;
-    }
+    let mut c = Canvas { data: canvas, width: w as i32, height: h as i32 };
+    toast::draw_text(
+        &mut c, &label, (bx + pad) as i32, (by + pad) as i32,
+        scale as i32, (255, 255, 255), 255,
+    );
 }
 
 fn draw_border(canvas: &mut [u8], w: i64, h: i64, x0: i64, y0: i64, x1: i64, y1: i64) {

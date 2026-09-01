@@ -7,7 +7,7 @@
 //!     snapocr-shot [输出路径]        框选，省略路径或写 `-` 则输出到 stdout
 //!     snapocr-shot --outputs         打印各屏尺寸与缩放
 //!     snapocr-shot --full [目录]     非交互整屏抓取（诊断用）
-//!     snapocr-shot --toast --title T [--body B] [--hint H] [--timeout MS]
+//!     snapocr-shot --toast --state copied|saved [--body "1169 x 651"] [--timeout MS]
 //!                                    底部弹一条浮层，用退出码回报用户按了什么
 //!
 //! 退出码：0 成功/无动作，1 出错，2 用户取消，3 看门狗超时，
@@ -87,12 +87,8 @@ fn run() -> Result<bool> {
             std::thread::sleep(std::time::Duration::from_millis(timeout_ms));
             std::process::exit(0);
         });
-        app.add_toast(
-            &qh,
-            &arg_value("--title").unwrap_or_default(),
-            &arg_value("--body").unwrap_or_default(),
-            &arg_value("--hint").unwrap_or_default(),
-        );
+        let copied = arg_value("--state").as_deref() != Some("saved");
+        app.add_toast(&qh, copied, &arg_value("--body").unwrap_or_default());
         app.run(&conn, &mut queue)?;
         std::process::exit(app.action as i32);
     }
