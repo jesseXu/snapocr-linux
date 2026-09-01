@@ -40,7 +40,7 @@ and it is useful on its own, independently of the OCR and markup parts.
 ## Install
 
 ```bash
-git clone https://github.com/jesseXu/snapocr.git
+git clone https://github.com/jesseXu/snapocr-linux-linux.git
 cd snapocr
 
 ./scripts/build-deb.sh                        # needs a Rust toolchain

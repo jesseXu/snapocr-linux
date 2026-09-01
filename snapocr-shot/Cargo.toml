@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Region screenshot tool for Wayland compositors that speak ext-image-copy-capture-v1 (e.g. cosmic-comp), where grim does not work."
 license = "MIT"
-repository = "https://github.com/jesseXu/snapocr"
+repository = "https://github.com/jesseXu/snapocr-linux"
 
 [dependencies]
 wayland-client = "0.31"

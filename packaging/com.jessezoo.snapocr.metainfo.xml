@@ -18,8 +18,8 @@
     </p>
   </description>
   <launchable type="desktop-id">snapocr-shot.desktop</launchable>
-  <url type="homepage">https://github.com/jesseXu/snapocr</url>
-  <url type="bugtracker">https://github.com/jesseXu/snapocr/issues</url>
+  <url type="homepage">https://github.com/jesseXu/snapocr-linux</url>
+  <url type="bugtracker">https://github.com/jesseXu/snapocr-linux/issues</url>
   <provides>
     <binary>snapocr</binary>
     <binary>snapocr-shot</binary>
