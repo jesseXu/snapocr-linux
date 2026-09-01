@@ -9,7 +9,7 @@ from __future__ import annotations
 import struct
 import sys
 
-from . import clipboard, notify, ocr, paths, shot, textwindow
+from . import clipboard, markup, notify, ocr, paths, shot, textwindow
 
 
 def png_size(data: bytes) -> tuple[int, int]:
@@ -32,12 +32,14 @@ def cmd_shot() -> int:
     action = notify.show(
         "已复制到剪贴板",
         f"{width} × {height}",
-        actions=[("save", "保存到图片")],
+        actions=[("save", "保存到图片"), ("markup", "标注")],
     )
     if action == "save":
         target = paths.pictures_dir() / paths.screenshot_name()
         target.write_bytes(png)
         notify.show("已保存", str(target), timeout_ms=3000)
+    elif action == "markup":
+        return markup.show(png)
     return 0
 
 

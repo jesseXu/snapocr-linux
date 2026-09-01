@@ -11,7 +11,7 @@ import threading
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk  # noqa: E402
+from gi.repository import Gio, GLib, Gtk  # noqa: E402
 
 from . import clipboard  # noqa: E402
 
@@ -115,7 +115,12 @@ def show(recognize) -> int:
     先出窗口再识别（而不是识别完再出窗口）：识别要几百毫秒到数秒，
     先给反馈才不会让人以为快捷键没生效。
     """
-    app = Gtk.Application(application_id=_APP_ID)
+    # NON_UNIQUE 是必须的:默认的单实例语义下,第一个结果窗还开着时再次
+    # 调用只会去激活旧窗口然后静默退出,新识别的文字根本不显示。
+    # 本工具由快捷键反复触发,每次都该是独立的一次结果。
+    app = Gtk.Application(
+        application_id=_APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE
+    )
 
     def on_activate(a: Gtk.Application) -> None:
         _ResultWindow(a, recognize).present()
