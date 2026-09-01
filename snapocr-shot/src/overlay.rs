@@ -330,61 +330,7 @@ impl App {
         };
         data[..len].fill(0); // 全透明底，只有圆角矩形那块可见
 
-        let s = scale as f32;
-        let mut canvas = Canvas { data, width: w, height: h };
-        toast::fill_rounded_rect(&mut canvas, 0, 0, w, h, 14.0 * s, (18, 18, 20), 238);
-
-        let white = (255, 255, 255);
-        let dim = (168, 168, 176);
-        let icon = 26.0 * s;
-
-        // 第一行：状态图标（+ 尺寸数字）。
-        let digits_scale = (2.0 * s).round().max(1.0) as i32;
-        let text_w = if t.body.is_empty() { 0 } else { toast::text_width(&t.body, digits_scale) };
-        let gap = 10.0 * s;
-        let row1_w = icon + if text_w > 0 { gap + text_w as f32 } else { 0.0 };
-        let mut x = (w as f32 - row1_w) / 2.0;
-        // 只有一行时垂直居中；两行时靠上留出按键提示的位置。
-        let y = if t.copied { 16.0 * s } else { (h as f32 - icon) / 2.0 };
-        if t.copied {
-            toast::icon_clipboard_check(&mut canvas, x, y, icon, white, 255);
-        } else {
-            toast::icon_check(&mut canvas, x, y, icon, white, 255);
-        }
-        if text_w > 0 {
-            x += icon + gap;
-            let th = 7 * digits_scale;
-            toast::draw_text(
-                &mut canvas, &t.body, x as i32,
-                (y + (icon - th as f32) / 2.0) as i32,
-                digits_scale, white, 255,
-            );
-        }
-
-        // 第二行：[S] 保存图标   [E] 笔图标。字母即按键，图标即含义 ——
-        // 两者合起来不需要任何文案，也就不需要翻译。
-        if t.copied {
-            let cap = 20.0 * s;
-            let mini = 18.0 * s;
-            let inner = 5.0 * s;
-            let between = 22.0 * s;
-            let cap_w = cap * 0.86;
-            let group = cap_w + inner + mini;
-            let total = group * 2.0 + between;
-            let mut gx = (w as f32 - total) / 2.0;
-            let gy = y + icon + 14.0 * s;
-            for (letter, is_save) in [("S", true), ("E", false)] {
-                let used = toast::draw_keycap(&mut canvas, letter, gx, gy, cap, 255);
-                let ix = gx + used + inner;
-                let iy = gy + (cap - mini) / 2.0;
-                if is_save {
-                    toast::icon_save(&mut canvas, ix, iy, mini, dim, 255);
-                } else {
-                    toast::icon_pen(&mut canvas, ix, iy, mini, dim, 255);
-                }
-                gx += group + between;
-            }
-        }
+        render_toast(data, w, h, scale as f32, t.copied, &t.body);
 
         let surface = t.layer.wl_surface().clone();
         surface.set_buffer_scale(scale);
@@ -603,6 +549,65 @@ fn draw_size_label(
         &mut c, &label, (bx + pad) as i32, (by + pad) as i32,
         scale as i32, (255, 255, 255), 255,
     );
+}
+
+/// 把 toast 画进一块 BGRA 缓冲。与 Wayland 无关，故也用于 `--toast-preview`
+/// 离屏渲染 —— 调 toast 做视觉验证时不必真的占用屏幕和键盘。
+pub fn render_toast(data: &mut [u8], w: i32, h: i32, s: f32, copied: bool, body: &str) {
+    let mut canvas = Canvas { data, width: w, height: h };
+    toast::fill_rounded_rect(&mut canvas, 0, 0, w, h, 14.0 * s, (18, 18, 20), 238);
+
+    let white = (255, 255, 255);
+    let dim = (216, 216, 222);
+    let icon = 26.0 * s;
+
+    // 第一行：状态图标（+ 尺寸数字）。
+    let digits_scale = (2.0 * s).round().max(1.0) as i32;
+    let text_w = if body.is_empty() { 0 } else { toast::text_width(body, digits_scale) };
+    let gap = 10.0 * s;
+    let row1_w = icon + if text_w > 0 { gap + text_w as f32 } else { 0.0 };
+    let mut x = (w as f32 - row1_w) / 2.0;
+    // 只有一行时垂直居中；两行时靠上留出按键提示的位置。
+    let y = if copied { 16.0 * s } else { (h as f32 - icon) / 2.0 };
+    if copied {
+        toast::icon_copy(&mut canvas, x, y, icon, white, 255);
+    } else {
+        toast::icon_check(&mut canvas, x, y, icon, white, 255);
+    }
+    if text_w > 0 {
+        x += icon + gap;
+        let th = 7 * digits_scale;
+        toast::draw_text(
+            &mut canvas, body, x as i32,
+            (y + (icon - th as f32) / 2.0) as i32,
+            digits_scale, white, 255,
+        );
+    }
+
+    // 第二行：[S] 保存图标   [E] 笔图标。字母即按键，图标即含义 ——
+    // 两者合起来不需要任何文案，也就不需要翻译。
+    if copied {
+        let cap = 20.0 * s;
+        let mini = 21.0 * s;
+        let inner = 5.0 * s;
+        let between = 22.0 * s;
+        let cap_w = cap * 0.86;
+        let group = cap_w + inner + mini;
+        let total = group * 2.0 + between;
+        let mut gx = (w as f32 - total) / 2.0;
+        let gy = y + icon + 14.0 * s;
+        for (letter, is_save) in [("S", true), ("E", false)] {
+            let used = toast::draw_keycap(&mut canvas, letter, gx, gy, cap, 255);
+            let ix = gx + used + inner;
+            let iy = gy + (cap - mini) / 2.0;
+            if is_save {
+                toast::icon_save(&mut canvas, ix, iy, mini, dim, 255);
+            } else {
+                toast::icon_pen(&mut canvas, ix, iy, mini, dim, 255);
+            }
+            gx += group + between;
+        }
+    }
 }
 
 fn draw_border(canvas: &mut [u8], w: i64, h: i64, x0: i64, y0: i64, x1: i64, y1: i64) {

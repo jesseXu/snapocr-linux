@@ -121,6 +121,53 @@ fn point_segment_distance(px: f32, py: f32, x0: f32, y0: f32, x1: f32, y1: f32) 
     ((px - (x0 + t * dx)).powi(2) + (py - (y0 + t * dy)).powi(2)).sqrt()
 }
 
+/// 多边形填充，4x4 超采样抗锯齿。
+///
+/// 小图标（18~20px）上细线条会显得很虚，实心形状才读得清 —— 这是把
+/// toast 图标重画一遍的主要原因。
+pub fn fill_polygon(c: &mut Canvas, pts: &[(f32, f32)], rgb: (u8, u8, u8), alpha: u8) {
+    if pts.len() < 3 {
+        return;
+    }
+    let min_x = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min).floor() as i32;
+    let max_x = pts.iter().map(|p| p.0).fold(f32::MIN, f32::max).ceil() as i32;
+    let min_y = pts.iter().map(|p| p.1).fold(f32::MAX, f32::min).floor() as i32;
+    let max_y = pts.iter().map(|p| p.1).fold(f32::MIN, f32::max).ceil() as i32;
+    const N: i32 = 4;
+    for py in min_y..=max_y {
+        for px in min_x..=max_x {
+            let mut hits = 0;
+            for sy in 0..N {
+                for sx in 0..N {
+                    let x = px as f32 + (sx as f32 + 0.5) / N as f32;
+                    let y = py as f32 + (sy as f32 + 0.5) / N as f32;
+                    if point_in_polygon(x, y, pts) {
+                        hits += 1;
+                    }
+                }
+            }
+            if hits > 0 {
+                let cov = hits as f32 / (N * N) as f32;
+                c.blend(px, py, rgb, (alpha as f32 * cov) as u8);
+            }
+        }
+    }
+}
+
+fn point_in_polygon(x: f32, y: f32, pts: &[(f32, f32)]) -> bool {
+    let mut inside = false;
+    let mut j = pts.len() - 1;
+    for i in 0..pts.len() {
+        let (xi, yi) = pts[i];
+        let (xj, yj) = pts[j];
+        if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
 // ---------- 点阵字模 ----------
 
 /// 5x7 点阵，只覆盖 toast 与尺寸标签实际用到的字符。
@@ -175,50 +222,71 @@ pub fn draw_text(c: &mut Canvas, text: &str, x: i32, y: i32, scale: i32, rgb: (u
 
 const W: (u8, u8, u8) = (255, 255, 255);
 
-/// 剪贴板 + 对勾：已复制。
-pub fn icon_clipboard_check(c: &mut Canvas, x: f32, y: f32, size: f32, rgb: (u8, u8, u8), alpha: u8) {
-    let t = (size * 0.09).max(1.0);
-    let (bw, bh) = (size * 0.68, size * 0.80);
-    let bx = x + (size - bw) / 2.0;
-    let by = y + size * 0.16;
+/// 两个交叠的圆角方块：已复制。
+///
+/// 原先画的是「剪贴板 + 对勾」，在 26px 里挤了圆角框、顶部夹子、对勾三样，
+/// 形状毛糙，紧挨着一串数字很不协调，含义也不直给。交叠方块是各家 UI 通用
+/// 的复制符号，只有两个几何体，和数字并排也稳。
+pub fn icon_copy(c: &mut Canvas, x: f32, y: f32, size: f32, rgb: (u8, u8, u8), alpha: u8) {
+    let t = (size * 0.11).max(1.5);
+    let side = size * 0.62;
+    // 后面那张：只描边，露出左上一角
     stroke_rounded_rect(
-        c, bx as i32, by as i32, bw as i32, bh as i32,
-        size * 0.12, t, rgb, alpha,
+        c, (x + size * 0.02) as i32, (y + size * 0.02) as i32,
+        side as i32, side as i32, size * 0.14, t, rgb, alpha,
     );
-    // 顶部的夹子
-    let clip_w = size * 0.32;
+    // 前面那张：先挖掉与后者重叠的部分，再描边，交叠关系才看得出来
+    let fx = x + size * 0.36;
+    let fy = y + size * 0.36;
+    fill_rounded_rect(
+        c, (fx - t) as i32, (fy - t) as i32,
+        (side + t * 2.0) as i32, (side + t * 2.0) as i32,
+        size * 0.16, (18, 18, 20), 255,
+    );
     stroke_rounded_rect(
-        c, (x + (size - clip_w) / 2.0) as i32, (y + size * 0.04) as i32,
-        clip_w as i32, (size * 0.20) as i32, size * 0.06, t, rgb, alpha,
+        c, fx as i32, fy as i32, side as i32, side as i32,
+        size * 0.14, t, rgb, alpha,
     );
-    // 对勾
-    stroke_line(c, bx + bw * 0.22, by + bh * 0.55, bx + bw * 0.42, by + bh * 0.75, t, rgb, alpha);
-    stroke_line(c, bx + bw * 0.42, by + bh * 0.75, bx + bw * 0.80, by + bh * 0.32, t, rgb, alpha);
 }
 
-/// 向下箭头落到托盘上：保存到磁盘。
+/// 向下箭头落到托盘上：保存到磁盘。箭头头部用实心三角 —— 细线画的
+/// 人字形箭头在 18px 上几乎看不出方向。
 pub fn icon_save(c: &mut Canvas, x: f32, y: f32, size: f32, rgb: (u8, u8, u8), alpha: u8) {
-    let t = (size * 0.10).max(1.0);
+    let t = (size * 0.16).max(2.0);
     let cx = x + size / 2.0;
-    stroke_line(c, cx, y + size * 0.10, cx, y + size * 0.58, t, rgb, alpha);
-    stroke_line(c, cx - size * 0.20, y + size * 0.38, cx, y + size * 0.60, t, rgb, alpha);
-    stroke_line(c, cx + size * 0.20, y + size * 0.38, cx, y + size * 0.60, t, rgb, alpha);
-    // 托盘
-    stroke_line(c, x + size * 0.14, y + size * 0.82, x + size * 0.86, y + size * 0.82, t, rgb, alpha);
-    stroke_line(c, x + size * 0.14, y + size * 0.66, x + size * 0.14, y + size * 0.82, t, rgb, alpha);
-    stroke_line(c, x + size * 0.86, y + size * 0.66, x + size * 0.86, y + size * 0.82, t, rgb, alpha);
+    stroke_line(c, cx, y + size * 0.08, cx, y + size * 0.42, t, rgb, alpha);
+    fill_polygon(c, &[
+        (cx - size * 0.26, y + size * 0.38),
+        (cx + size * 0.26, y + size * 0.38),
+        (cx, y + size * 0.68),
+    ], rgb, alpha);
+    // 托盘：一条粗横线加两个小立边，足够表达「落到某处」
+    let tt = (size * 0.14).max(2.0);
+    stroke_line(c, x + size * 0.10, y + size * 0.88, x + size * 0.90, y + size * 0.88, tt, rgb, alpha);
+    stroke_line(c, x + size * 0.10, y + size * 0.70, x + size * 0.10, y + size * 0.88, tt, rgb, alpha);
+    stroke_line(c, x + size * 0.90, y + size * 0.70, x + size * 0.90, y + size * 0.88, tt, rgb, alpha);
 }
 
-/// 一支笔：标注。
+/// 一支铅笔：标注。整支笔用实心多边形而非线条 —— 细线画的笔在 18px 上
+/// 只是一道斜杠，看不出是笔。
 pub fn icon_pen(c: &mut Canvas, x: f32, y: f32, size: f32, rgb: (u8, u8, u8), alpha: u8) {
-    let t = (size * 0.11).max(1.0);
-    // 笔杆
-    stroke_line(c, x + size * 0.28, y + size * 0.72, x + size * 0.78, y + size * 0.20, t, rgb, alpha);
-    // 笔尖
-    stroke_line(c, x + size * 0.18, y + size * 0.84, x + size * 0.30, y + size * 0.70, t * 0.8, rgb, alpha);
-    stroke_line(c, x + size * 0.18, y + size * 0.84, x + size * 0.32, y + size * 0.80, t * 0.8, rgb, alpha);
-    // 笔帽处的横杠
-    stroke_line(c, x + size * 0.62, y + size * 0.14, x + size * 0.84, y + size * 0.34, t * 0.7, rgb, alpha);
+    let s = size;
+    // 笔身：沿左下→右上的斜向四边形
+    fill_polygon(c, &[
+        (x + s * 0.34, y + s * 0.80),
+        (x + s * 0.20, y + s * 0.66),
+        (x + s * 0.66, y + s * 0.20),
+        (x + s * 0.80, y + s * 0.34),
+    ], rgb, alpha);
+    // 笔尖：指向左下的实心三角
+    fill_polygon(c, &[
+        (x + s * 0.20, y + s * 0.66),
+        (x + s * 0.34, y + s * 0.80),
+        (x + s * 0.12, y + s * 0.88),
+    ], rgb, alpha);
+    // 笔帽端的分隔线，让它更像铅笔而不是一块菱形
+    stroke_line(c, x + s * 0.58, y + s * 0.28, x + s * 0.72, y + s * 0.42,
+                (s * 0.07).max(1.0), (18, 18, 20), alpha);
 }
 
 /// 对勾：已保存。

@@ -106,6 +106,11 @@ scripts/          打包脚本
 snapocr-shot out.png      # 框选并保存
 snapocr-shot -            # 输出到 stdout
 snapocr-shot --outputs    # 打印各屏物理/逻辑尺寸与缩放
+snapocr-shot --full 目录   # 非交互整屏抓取（诊断用，不显示浮层）
+
+# 把 toast 离屏渲染成 PNG，用来调视觉。toast 独占键盘，一打字就会被消掉，
+# 没法靠抓屏验证，所以有这个离屏出口。
+snapocr-shot --toast-preview /tmp/t.png --state copied --body "1246 x 653"
 ```
 
 ## 不需要开机自启

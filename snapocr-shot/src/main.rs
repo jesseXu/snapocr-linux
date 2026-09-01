@@ -77,6 +77,28 @@ fn run() -> Result<bool> {
         return Ok(true);
     }
 
+    // 离屏渲染 toast 成 PNG：调视觉时不必真的占屏幕和键盘
+    // （toast 独占键盘，用户一打字就会把它消掉，根本没法靠抓屏验证）。
+    if let Some(path) = arg_value("--toast-preview") {
+        let scale: f32 = arg_value("--scale").and_then(|v| v.parse().ok()).unwrap_or(2.0);
+        let copied = arg_value("--state").as_deref() != Some("saved");
+        let (lw, lh) = (240.0, if copied { 98.0 } else { 66.0 });
+        let (w, h) = ((lw * scale) as i32, (lh * scale) as i32);
+        let mut data = vec![0u8; (w * h * 4) as usize];
+        overlay::render_toast(&mut data, w, h, scale, copied, &arg_value("--body").unwrap_or_default());
+        // BGRA -> RGBA
+        for px in data.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+        let file = std::fs::File::create(&path)?;
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header()?.write_image_data(&data)?;
+        println!("{path}  ({w}x{h})");
+        return Ok(true);
+    }
+
     if std::env::args().any(|a| a == "--toast") {
         let timeout_ms: u64 = arg_value("--timeout")
             .and_then(|v| v.parse().ok())
