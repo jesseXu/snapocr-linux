@@ -5,43 +5,81 @@ Linux 实现 —— 保持使用体验，技术选型完全按 Linux 上顺手�
 
 设计与取舍见 [DESIGN.md](DESIGN.md)。
 
-## 功能
+## 安装
+
+```bash
+# 从源码打包（需要 Rust 工具链）
+./scripts/build-deb.sh
+
+# 安装。apt 会自动装齐 tesseract、wl-clipboard、GTK4 等所有依赖
+sudo apt install ./snapocr_0.1.0_amd64.deb
+
+# 注册全局快捷键（用你自己的身份，不要加 sudo —— 快捷键写在你的用户配置里）
+snapocr install
+```
+
+装完 `snapocr` 就在 PATH 上，与源码目录再无关系，源码删掉也不影响。
+
+`snapocr doctor` 检查依赖是否齐全；`sudo apt remove snapocr` 卸载
+（快捷键需另外用 `snapocr uninstall` 清掉，因为它在用户配置里）。
+
+## 用法
 
 | 快捷键 | 做什么 |
 | --- | --- |
-| `Ctrl+Alt+A` | 框选一块区域 → **图片直接进剪贴板** → 通知里可「保存到图片」或「标注」 |
-| `Ctrl+Alt+S` | 框选一块区域 → 识别文字 → **可编辑**的结果窗口，自动全量复制 |
+| `Ctrl+Alt+A` | 框选 → **图片直接进剪贴板** → 通知里还可「保存到图片」或「标注」 |
+| `Ctrl+Alt+S` | 框选 → 识别文字 → **可编辑**的结果窗口，并自动全量复制 |
+| `Ctrl+Alt+E` | 框选 → **直接进标注编辑器** |
 
 框选浮层：冻结画面 + 整屏压暗，选区还原全亮并实时显示像素尺寸，
 十字光标，`Esc` 取消。
 
-标注编辑器：钢笔手绘 / 箭头 / 自动编号的数字标记点，6 色，`Ctrl+Z` 撤销。
-复制和保存都按**原始像素**重绘，不会因为窗口缩小显示而变糊。
+### 标注编辑器
 
-## 安装
-
-```bash
-# 1. 系统依赖
-sudo apt install wl-clipboard tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-chi-tra
-
-# 2. 构建抓屏工具
-cargo build --release --manifest-path snapocr-shot/Cargo.toml
-
-# 3. 注册全局快捷键（写入 COSMIC 配置，会自动备份并保留你已有的快捷键）
-./bin/snapocr install
-```
-
-`./bin/snapocr status` 查看注册状态，`./bin/snapocr uninstall` 撤销。
-
-**不需要开机自启**：全部是一次性进程，快捷键注册在 COSMIC 配置里本身就是
-持久的，没有常驻进程要拉起。这是相对 macOS 版（常驻菜单栏）的架构简化。
-
-## 手动使用
+`Ctrl+Alt+E` 框选后直接进入；也可以从截图通知的「标注」按钮进入。
+错过了通知也不要紧：
 
 ```bash
-./bin/snapocr shot     # 截图
-./bin/snapocr ocr      # 取字
+snapocr markup                 # 重新框选一块来标注
+snapocr markup --clipboard     # 标注刚才复制进剪贴板的那张图
+snapocr markup ~/图片/a.png     # 标注已有文件
 ```
+
+窗口上方一排是工具和颜色：
+
+- **钢笔** —— 按住拖动，自由手绘
+- **箭头** —— 从起点拖到终点，自动画出箭头头部
+- **标记点** —— 单击放置一个红底白字的圆点，自动编号 1、2、3…
+- 六个色块切换颜色（标记点固定红色）
+
+| 按键 | 作用 |
+| --- | --- |
+| `Ctrl+Z` | 撤销上一笔 |
+| `Ctrl+C` | 复制到剪贴板并关闭 |
+| `Ctrl+S` | 保存到图片目录并关闭 |
+| `Esc` | 放弃并关闭 |
+
+复制和保存都按**原始像素**重绘，不会因为窗口是缩小显示的而变糊。
+
+### 改快捷键
+
+两种方式，任选：
+
+**在系统设置里改**（推荐）——「设置 → 键盘 → 键盘快捷键 → 自定义快捷键」，
+这三条会以「SnapOCR 截图」这样的名字列在那里，直接改键位即可。我们写入的
+就是 COSMIC 自己的自定义快捷键配置，所以它的原生界面完全认得。
+
+**用命令行重装**：
+
+```bash
+snapocr install --shot "Super+Shift+A" --ocr "Super+Shift+S" --markup "Super+Shift+E"
+```
+
+修饰键可写 `Ctrl` / `Alt` / `Shift` / `Super`（也认 `Control`、`Option`、`Cmd`、
+`Win` 这些别名）；键名用 xkbcommon 的名字，单个字母直接写，具名键如
+`F1`、`Print`、`Escape`。`snapocr status` 看当前注册情况。
+
+写入前会自动备份，且只增删自己那几行，你已有的自定义快捷键不受影响。
 
 ## 组成
 
@@ -49,17 +87,24 @@ cargo build --release --manifest-path snapocr-shot/Cargo.toml
 snapocr-shot/     Rust。冻结抓屏(ext-image-copy-capture-v1)+ 框选浮层
                   (zwlr_layer_shell_v1),输出 PNG。协议层的脏活都在这里。
 snapocr/          Python + GTK4。编排层:剪贴板、通知、OCR、结果窗、标注。
-bin/snapocr       启动器。绑快捷键时指向它。
+packaging/        .desktop 文件
+scripts/          打包脚本
 ```
 
-`snapocr-shot` 也可以单独用 —— 它本质上是「给 cosmic-comp 用的 grim+slurp」，
+`snapocr-shot` 也可以单独用 —— 它本质上是「给 cosmic-comp 的 grim+slurp」，
 而这两个工具在 COSMIC 上都不可用（cosmic-comp 不提供 `wlr-screencopy`）：
 
 ```bash
-./target/release/snapocr-shot out.png    # 框选并保存
-./target/release/snapocr-shot -          # 输出到 stdout
-./target/release/snapocr-shot --outputs  # 打印各屏物理/逻辑尺寸与缩放
+snapocr-shot out.png      # 框选并保存
+snapocr-shot -            # 输出到 stdout
+snapocr-shot --outputs    # 打印各屏物理/逻辑尺寸与缩放
 ```
+
+## 不需要开机自启
+
+全部是一次性进程，快捷键注册在 COSMIC 配置里本身就是持久的，没有常驻
+进程要拉起。这是相对 macOS 版（常驻菜单栏）的架构简化，也因此不需要
+托盘图标。
 
 ## 已知限制
 

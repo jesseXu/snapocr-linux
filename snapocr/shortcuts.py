@@ -27,28 +27,84 @@ CONFIG = (
 
 # 沿用 macOS 版键位：⌃⌥A / ⌃⌥S（Option 在 Linux 上即 Alt）。
 # 已核对 COSMIC 默认快捷键中 Ctrl+Alt 组合完全未被占用。
-BINDINGS = [
-    ("[Ctrl, Alt]", "a", "shot", "SnapOCR 截图"),
-    ("[Ctrl, Alt]", "s", "ocr", "SnapOCR 取字"),
-]
+DEFAULT_KEYS = {
+    "shot": "Ctrl+Alt+A",
+    "ocr": "Ctrl+Alt+S",
+    "markup": "Ctrl+Alt+E",   # E = edit，沿用 macOS 版 toast 上的按键
+}
+_DESCRIPTIONS = {
+    "shot": "SnapOCR 截图",
+    "ocr": "SnapOCR 取字",
+    "markup": "SnapOCR 截图并标注",
+}
 
 _MARK = "snapocr"
 
 
 def _launcher() -> Path:
-    path = Path(__file__).resolve().parent.parent / "bin" / "snapocr"
-    if not path.is_file():
-        raise FileNotFoundError(f"找不到启动器：{path}")
-    return path
+    """定位启动器。
+
+    装成 .deb 后在 /usr/bin/snapocr；从源码目录直接跑时在 ./bin/snapocr。
+    快捷键配置里必须写绝对路径 —— cosmic-comp 启动命令时不带用户的 PATH。
+    """
+    packaged = Path("/usr/bin/snapocr")
+    if packaged.is_file():
+        return packaged
+    local = Path(__file__).resolve().parent.parent / "bin" / "snapocr"
+    if local.is_file():
+        return local
+    found = shutil.which("snapocr")
+    if found:
+        return Path(found)
+    raise FileNotFoundError("找不到 snapocr 启动器")
 
 
-def _lines() -> list[str]:
+# 用户写法 → COSMIC 的修饰键名
+_MOD_ALIASES = {
+    "ctrl": "Ctrl", "control": "Ctrl",
+    "alt": "Alt", "option": "Alt", "opt": "Alt",
+    "shift": "Shift",
+    "super": "Super", "meta": "Super", "win": "Super", "cmd": "Super",
+}
+
+
+def parse_key(spec: str) -> tuple[str, str]:
+    """把 `Ctrl+Alt+A` 解析成 (`[Ctrl, Alt]`, `a`)。
+
+    键名用 xkbcommon 的 keysym 名（去掉 KEY_ 前缀）：单个字母小写，
+    具名键保持原样（F1 / Escape / Print）。
+    """
+    parts = [p.strip() for p in spec.replace("-", "+").split("+") if p.strip()]
+    if not parts:
+        raise ValueError(f"无法解析快捷键：{spec!r}")
+    *mod_parts, key = parts
+
+    mods: list[str] = []
+    for m in mod_parts:
+        canonical = _MOD_ALIASES.get(m.lower())
+        if canonical is None:
+            raise ValueError(
+                f"无法识别的修饰键 {m!r}，可用：Ctrl / Alt / Shift / Super"
+            )
+        if canonical not in mods:
+            mods.append(canonical)
+    if not mods:
+        raise ValueError(f"{spec!r} 没有修饰键。无修饰键的全局快捷键会吞掉普通按键。")
+
+    key = key.lower() if len(key) == 1 else key
+    return f"[{', '.join(mods)}]", key
+
+
+def _lines(keys: dict[str, str]) -> list[str]:
     exe = _launcher()
-    return [
-        f'    (modifiers: {mods}, key: "{key}", description: "{desc}"):'
-        f' Spawn("{exe} {sub}"),'
-        for mods, key, sub, desc in BINDINGS
-    ]
+    out = []
+    for sub, spec in keys.items():
+        mods, key = parse_key(spec)
+        out.append(
+            f'    (modifiers: {mods}, key: "{key}", '
+            f'description: "{_DESCRIPTIONS[sub]}"): Spawn("{exe} {sub}"),'
+        )
+    return out
 
 
 def _read_existing() -> list[str]:
@@ -80,18 +136,20 @@ def _write(lines: list[str]) -> None:
     CONFIG.write_text(f"{{\n{body}\n}}\n", encoding="utf-8")
 
 
-def install() -> str:
+def install(keys: dict[str, str] | None = None) -> str:
+    keys = {**DEFAULT_KEYS, **(keys or {})}
+    for spec in keys.values():   # 先全部解析通过再落盘，避免写出半截配置
+        parse_key(spec)
     kept = _read_existing()
-    _write(kept + _lines())
-    exe = _launcher()
+    _write(kept + _lines(keys))
     detail = "\n".join(
-        f"  Ctrl+Alt+{key.upper()}   {desc}" for _m, key, _s, desc in BINDINGS
+        f"  {keys[sub]:<16} {_DESCRIPTIONS[sub]}" for sub in keys
     )
     return (
         f"已写入 {CONFIG}\n{detail}\n\n"
-        f"启动器：{exe}\n"
-        "cosmic-comp 监听该文件，通常即刻生效；若没反应，"
-        "在「设置 → 键盘 → 快捷键」里看一眼即可。"
+        f"启动器：{_launcher()}\n"
+        "cosmic-comp 监听该文件，通常即刻生效。\n"
+        "之后想改键位，直接在「设置 → 键盘 → 键盘快捷键 → 自定义快捷键」里改即可。"
     )
 
 

@@ -200,12 +200,14 @@ class _MarkupWindow(Gtk.ApplicationWindow):
         tools = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         tools.add_css_class("linked")
         first: Gtk.ToggleButton | None = None
-        for tool, icon, tip in (
-            (PEN, "document-edit-symbolic", "钢笔"),
-            (ARROW, "go-next-symbolic", "箭头"),
-            (MARKER, "list-add-symbolic", "标记点"),
+        # 用文字而非图标：钢笔/箭头/标记点这几个概念没有公认的图标，
+        # 而且图标主题缺失时按钮会变成空白，用户无从下手。
+        for tool, label, tip in (
+            (PEN, "钢笔", "按住拖动，自由手绘"),
+            (ARROW, "箭头", "从起点拖到终点，画一支箭头"),
+            (MARKER, "标记点", "单击放置，自动编号 1、2、3…"),
         ):
-            btn = Gtk.ToggleButton(icon_name=icon, tooltip_text=tip)
+            btn = Gtk.ToggleButton(label=label, tooltip_text=tip)
             if first is None:
                 first = btn
                 btn.set_active(True)
