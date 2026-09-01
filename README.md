@@ -40,8 +40,8 @@ and it is useful on its own, independently of the OCR and markup parts.
 ## Install
 
 ```bash
-git clone https://github.com/jesseXu/snapocr-linux-linux.git
-cd snapocr
+git clone https://github.com/jesseXu/snapocr-linux.git
+cd snapocr-linux
 
 ./scripts/build-deb.sh                        # needs a Rust toolchain
 sudo apt install ./snapocr_0.1.0_amd64.deb    # apt pulls in tesseract, wl-clipboard, GTK4
