@@ -176,6 +176,31 @@ COSMIC 自定义快捷键 (Spawn)
 | **GNOME** | 仅 portal | ❌ 拒绝 layer-shell | ❌ 无 data-control | GlobalShortcuts portal | 🔴 需单独写一整条 portal 路径 |
 | **X11 桌面**<br>(Xfce/Cinnamon/i3) | XGetImage | 普通 override-redirect 窗口 | xclip | XGrabKey | 🟢 另一条路，但最简单 |
 
+### 一条实测得来的可移植性原则
+
+**凡是这个工具需要的屏上交互，一律自己画；不要依赖各桌面对通知规范的选择性实现。**
+
+起初截图后的「保存 / 标注」用的是桌面通知的动作按钮，理由是通知是 freedesktop
+标准、比 layer-shell 通用。这个理由**错了**：
+
+| 通知守护进程 | 渲染动作按钮吗 |
+| --- | --- |
+| GNOME / KDE | 会 |
+| **cosmic-notifications** | **不会**（抓屏实测，尽管 `GetCapabilities` 里声称支持 `actions`） |
+| **dunst**（sway/i3 常用） | **不会** —— 包描述自称「只显示一个纯文本色块」 |
+| **mako**（wlroots 常用） | **不会** —— 靠点击整条通知触发默认动作 |
+
+也就是说，在本工具的主要目标环境里，通知按钮多数根本不显示。而本工具**已经**
+硬依赖 layer-shell（框选浮层就是 layer surface），layer-shell 跑不了的桌面上整个
+工具本来也跑不起来 —— 所以自绘 toast 的可移植性成本是零，还换来跨桌面完全一致
+的观感、超时与按键。
+
+教训：**「声称支持」不等于「会显示出来」**，能力查询（`GetCapabilities`）只能证伪
+不能证实，这类判断必须实机抓屏验证。
+
+通知因此降级为**只用来报错** —— 报错正需要它的长处：不需要按钮、会留在通知中心
+等人看。而由快捷键启动时 stderr 无人可见，静默失败比报错更糟。
+
 结论：
 
 - **抓屏与浮层做成可插拔后端**，v1 只实现 COSMIC 那条。通用性预留在架构里，不在 v1 实现。

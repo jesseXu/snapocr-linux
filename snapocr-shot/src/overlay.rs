@@ -40,6 +40,7 @@ use wayland_client::{
 };
 
 use crate::capture::Shot;
+use crate::toast::{self, Canvas};
 
 /// 选区，单位为物理像素，坐标原点在对应屏幕的左上角。
 #[derive(Debug, Clone, Copy)]
@@ -57,6 +58,11 @@ const DIM_KEEP: u32 = 140; // 亮度 * 140/255 ≈ 0.55
 const BORDER: i64 = 2;
 /// 边框颜色（B, G, R）——COSMIC 强调色近似的蓝。
 const BORDER_BGR: [u8; 3] = [0xE0, 0x90, 0x30];
+/// toast 的逻辑尺寸与离屏边距。
+const TOAST_W: u32 = 460;
+const TOAST_H: u32 = 104;
+const TOAST_MARGIN_BOTTOM: i32 = 90;
+
 /// 两帧之间的最小间隔（约 120fps）。
 const MIN_FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_millis(8);
 /// 小于这个尺寸（物理像素）视为误点，不算选区。
@@ -91,6 +97,19 @@ impl Overlay {
     }
 }
 
+struct ToastSurface {
+    layer: LayerSurface,
+    pool: Option<SlotPool>,
+    /// configure 给的逻辑尺寸。
+    logical: (u32, u32),
+    /// 合成器建议的整数缩放。
+    scale: i32,
+    configured: bool,
+    title: String,
+    body: String,
+    hint: String,
+}
+
 pub struct App {
     registry_state: RegistryState,
     output_state: OutputState,
@@ -102,6 +121,11 @@ pub struct App {
     /// 免去加载光标主题、找图片、管理 surface 那一整套。
     cursor_shape: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     cursor_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
+
+    toast: Option<ToastSurface>,
+    text: Option<toast::TextRenderer>,
+    /// 用户在 toast 上按了什么：0 无，10 保存，11 标注。
+    pub action: u8,
 
     overlays: Vec<Overlay>,
     /// 各屏冻结像素的副本。浮层在退出时就拆掉了，但裁剪要用到，所以单独留一份。
@@ -132,6 +156,9 @@ impl App {
             registry_state: RegistryState::new(globals),
             output_state: OutputState::new(globals, qh),
             seat_state: SeatState::new(globals, qh),
+            toast: None,
+            text: None,
+            action: 0,
             overlays: Vec::new(),
             shots: Vec::new(),
             keyboard: None,
@@ -244,6 +271,94 @@ impl App {
         }
     }
 
+    /// 挂一条底部浮出的 toast，等用户按键。
+    pub fn add_toast(&mut self, qh: &QueueHandle<Self>, title: &str, body: &str, hint: &str) {
+        let surface = self.compositor.create_surface(qh);
+        let layer = self.layer_shell.create_layer_surface(
+            qh,
+            surface,
+            Layer::Overlay,
+            Some("snapocr-toast"),
+            None,
+        );
+        layer.set_size(TOAST_W, TOAST_H);
+        layer.set_anchor(Anchor::BOTTOM);
+        layer.set_margin(0, 0, TOAST_MARGIN_BOTTOM, 0);
+        // 独占键盘：S / E 必须到得了我们手里，否则 toast 就只是个装饰。
+        layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        layer.commit();
+
+        self.toast = Some(ToastSurface {
+            layer,
+            pool: None,
+            logical: (TOAST_W, TOAST_H),
+            scale: 1,
+            configured: false,
+            title: title.to_string(),
+            body: body.to_string(),
+            hint: hint.to_string(),
+        });
+    }
+
+    fn draw_toast(&mut self) {
+        let Some(t) = self.toast.as_mut() else { return };
+        if !t.configured {
+            return;
+        }
+        let scale = t.scale.max(1);
+        let (lw, lh) = t.logical;
+        let (w, h) = ((lw as i32) * scale, (lh as i32) * scale);
+        let stride = w * 4;
+        let len = (stride * h) as usize;
+
+        if t.pool.is_none() {
+            match SlotPool::new(len, &self.shm) {
+                Ok(p) => t.pool = Some(p),
+                Err(e) => {
+                    eprintln!("toast 分配共享内存失败：{e}");
+                    return;
+                }
+            }
+        }
+        let pool = t.pool.as_mut().unwrap();
+        let (buffer, data) = match pool.create_buffer(w, h, stride, wl_shm::Format::Argb8888) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("toast 创建缓冲区失败：{e}");
+                return;
+            }
+        };
+        data[..len].fill(0); // 全透明底，只有圆角矩形那块可见
+
+        let s = scale as f32;
+        let mut canvas = Canvas { data, width: w, height: h };
+        toast::fill_rounded_rect(&mut canvas, 0, 0, w, h, 14.0 * s, (18, 18, 20), 235);
+
+        let text = self.text.get_or_insert_with(toast::TextRenderer::new);
+        let mut y = 16.0 * s;
+        for (content, size, rgb, alpha) in [
+            (t.title.as_str(), 16.0 * s, (255, 255, 255), 255u8),
+            (t.body.as_str(), 13.0 * s, (200, 200, 205), 255),
+            (t.hint.as_str(), 13.0 * s, (150, 150, 158), 255),
+        ] {
+            if content.is_empty() {
+                continue;
+            }
+            let tw = text.measure(content, size);
+            text.draw(&mut canvas, content, (w as f32 - tw) / 2.0, y, size, rgb, alpha);
+            y += size * 1.5;
+        }
+
+        let surface = t.layer.wl_surface().clone();
+        surface.set_buffer_scale(scale);
+        surface.damage_buffer(0, 0, w, h);
+        if let Err(e) = buffer.attach_to(&surface) {
+            eprintln!("toast attach 失败：{e}");
+            return;
+        }
+        surface.commit();
+    }
+
     /// 阻塞直到用户框选完成或取消。`None` 表示 Esc 取消或选区无效。
     pub fn run(
         &mut self,
@@ -257,6 +372,7 @@ impl App {
         // 正确做法是销毁 surface —— drop 会通过 SCTK 发出 destroy 请求。
         let result = self.result;
         self.overlays.clear();
+        self.toast = None;
         if let Err(e) = conn.roundtrip() {
             eprintln!("收尾 roundtrip 失败：{e}");
         }
@@ -538,6 +654,17 @@ impl LayerShellHandler for App {
         configure: LayerSurfaceConfigure,
         _: u32,
     ) {
+        if let Some(t) = self.toast.as_mut() {
+            if &t.layer == layer {
+                let (w, h) = configure.new_size;
+                if w != 0 && h != 0 {
+                    t.logical = (w, h);
+                }
+                t.configured = true;
+                self.draw_toast();
+                return;
+            }
+        }
         let Some(index) = self.overlays.iter().position(|o| &o.layer == layer) else {
             return;
         };
@@ -633,6 +760,18 @@ impl KeyboardHandler for App {
     ) {
         if event.keysym == Keysym::Escape {
             self.result = None;
+            self.exit = true;
+            return;
+        }
+        if self.toast.is_some() {
+            // toast 独占键盘。若一直挂到超时,用户截完图马上去别处打字的话,
+            // 这几秒的按键会全被吞掉 —— 所以任意其它键都立刻消掉 toast,
+            // 把代价限制在一个按键之内。
+            match event.keysym {
+                Keysym::s | Keysym::S => self.action = 10,
+                Keysym::e | Keysym::E => self.action = 11,
+                _ => self.action = 0,
+            }
             self.exit = true;
         }
     }
@@ -741,9 +880,18 @@ impl CompositorHandler for App {
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        _: &wl_surface::WlSurface,
-        _: i32,
+        surface: &wl_surface::WlSurface,
+        scale: i32,
     ) {
+        // toast 不铺满屏幕，拿不到 output 的缩放，只能听合成器建议的这个值。
+        let hit = matches!(self.toast.as_ref(), Some(t) if t.layer.wl_surface() == surface);
+        if hit {
+            if let Some(t) = self.toast.as_mut() {
+                t.scale = scale.max(1);
+                t.pool = None; // 尺寸变了，旧池作废
+            }
+            self.draw_toast();
+        }
     }
 
     fn transform_changed(

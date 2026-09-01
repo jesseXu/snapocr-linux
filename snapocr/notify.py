@@ -1,10 +1,14 @@
-"""桌面通知（带动作按钮）。
+"""桌面通知。
 
-Wayland 上普通窗口无法做到「无边框 + 底部定位 + 永远置顶」，而 macOS 版
-那个按 S 保存的 toast 正是这种窗口。这里改用系统通知 + 动作按钮：交互
-语义等价（立即反馈 + 可选后续操作），但完全用桌面原生机制，零窗口代码。
+**只用来报错。** 正常流程的反馈走自绘 toast（见 shot.toast）——
+通知规范里的动作按钮各家实现差异极大，cosmic-notifications 实测根本
+不渲染按钮，dunst、mako 也不画，指望它反而最不通用。详见 DESIGN.md §8。
 
-前提已实测：cosmic-notifications 的 GetCapabilities 含 `actions`。
+而报错恰恰适合通知：不需要按钮，会留在通知中心里等人看，
+不像 toast 几秒就消失。由快捷键启动时 stderr 没人看得见，
+静默失败比报错更糟。
+
+`actions` 参数保留，但调用方现在都不传 —— 别指望它能显示出来。
 """
 
 from __future__ import annotations

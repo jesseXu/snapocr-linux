@@ -4,12 +4,18 @@
 //! 抓下每块屏的当前画面 → 全屏压暗浮层 → 用户拖框 → 裁剪输出 PNG。
 //!
 //! 用法：
-//!     snapocr-shot [输出路径]     省略或写 `-` 则输出到 stdout
+//!     snapocr-shot [输出路径]        框选，省略路径或写 `-` 则输出到 stdout
+//!     snapocr-shot --outputs         打印各屏尺寸与缩放
+//!     snapocr-shot --full [目录]     非交互整屏抓取（诊断用）
+//!     snapocr-shot --toast --title T [--body B] [--hint H] [--timeout MS]
+//!                                    底部弹一条浮层，用退出码回报用户按了什么
 //!
-//! 退出码：0 成功，1 出错，2 用户取消（Esc 或未框选），3 看门狗超时。
+//! 退出码：0 成功/无动作，1 出错，2 用户取消，3 看门狗超时，
+//!         10 toast 上按了 S，11 toast 上按了 E。
 
 mod capture;
 mod overlay;
+mod toast;
 
 use anyhow::{Context, Result};
 use std::io::Write;
@@ -41,6 +47,11 @@ fn main() {
     }
 }
 
+fn arg_value(name: &str) -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned())
+}
+
 fn run() -> Result<bool> {
     let out_path = std::env::args().nth(1).unwrap_or_else(|| "-".into());
 
@@ -63,6 +74,44 @@ fn run() -> Result<bool> {
 
     if std::env::args().any(|a| a == "--outputs") {
         app.report_outputs();
+        return Ok(true);
+    }
+
+    if std::env::args().any(|a| a == "--toast") {
+        let timeout_ms: u64 = arg_value("--timeout")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4000);
+        // 到点直接退进程。toast 模式没有任何待落盘的东西，这么做是安全的，
+        // 也省掉了给事件循环加一套定时器的复杂度。
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(timeout_ms));
+            std::process::exit(0);
+        });
+        app.add_toast(
+            &qh,
+            &arg_value("--title").unwrap_or_default(),
+            &arg_value("--body").unwrap_or_default(),
+            &arg_value("--hint").unwrap_or_default(),
+        );
+        app.run(&conn, &mut queue)?;
+        std::process::exit(app.action as i32);
+    }
+
+    // 非交互整屏抓取：不显示浮层、不需要任何操作。用来做诊断，
+    // 也让「看一眼当前屏幕是什么样」这件事可脚本化。
+    if std::env::args().any(|a| a == "--full") {
+        let dir = std::env::args()
+            .nth(1)
+            .filter(|a| a != "--full")
+            .unwrap_or_else(|| ".".into());
+        for (output, name) in &app.outputs() {
+            let shot = capture::capture_output(&conn, &globals, output)
+                .with_context(|| format!("抓取屏幕 {name} 失败"))?;
+            let path = format!("{dir}/{name}.png");
+            let file = std::fs::File::create(&path)?;
+            write_png(std::io::BufWriter::new(file), &shot)?;
+            println!("{path}  ({}x{})", shot.width, shot.height);
+        }
         return Ok(true);
     }
 

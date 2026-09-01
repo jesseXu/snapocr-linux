@@ -11,6 +11,8 @@ _TIMEOUT_SECONDS = 180
 
 # 与 snapocr-shot 的退出码约定
 _EXIT_CANCELLED = 2
+_EXIT_TOAST_SAVE = 10
+_EXIT_TOAST_MARKUP = 11
 
 
 class Cancelled(Exception):
@@ -32,3 +34,22 @@ def select_region() -> bytes:
     if not proc.stdout:
         raise RuntimeError("抓屏没有输出任何数据")
     return proc.stdout
+
+
+def toast(title: str, body: str = "", hint: str = "", timeout_ms: int = 4000) -> str | None:
+    """底部弹一条浮层，返回用户按了什么（"save" / "markup" / None）。
+
+    自绘而非用桌面通知：通知规范里的动作按钮各家实现差异极大 ——
+    cosmic-notifications 实测不渲染，dunst、mako 也都不画按钮。而本工具
+    已经硬依赖 layer-shell，自绘的可移植性成本是零。详见 DESIGN.md §8。
+    """
+    cmd = [paths.shot_binary(), "--toast", "--title", title, "--timeout", str(timeout_ms)]
+    if body:
+        cmd += ["--body", body]
+    if hint:
+        cmd += ["--hint", hint]
+    try:
+        code = subprocess.run(cmd, timeout=timeout_ms / 1000 + 10).returncode
+    except subprocess.SubprocessError:
+        return None
+    return {_EXIT_TOAST_SAVE: "save", _EXIT_TOAST_MARKUP: "markup"}.get(code)

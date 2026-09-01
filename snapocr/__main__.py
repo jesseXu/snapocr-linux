@@ -46,20 +46,16 @@ def cmd_shot() -> int:
     except shot.Cancelled:
         return 0
 
+    # 先进剪贴板再弹 toast —— 顺序不能反：截图的卖点就是「松手即可粘贴」，
+    # 不能让它等一条提示走完。
     clipboard.write_image(png)
 
     width, height = png_size(png)
-    action = notify.show(
-        "已复制到剪贴板",
-        f"{width} × {height}",
-        actions=[("save", "保存到图片"), ("markup", "标注")],
-        # 留足看清并点击的时间;错过也不要紧,还有 snapocr markup 这个入口。
-        timeout_ms=6000,
-    )
+    action = shot.toast("已复制到剪贴板", f"{width} × {height}", "S 保存 · E 标注")
     if action == "save":
         target = paths.pictures_dir() / paths.screenshot_name()
         target.write_bytes(png)
-        notify.show("已保存", str(target), timeout_ms=3000)
+        shot.toast("已保存", target.name, timeout_ms=1600)
     elif action == "markup":
         return markup.show(png)
     return 0
@@ -156,8 +152,15 @@ def main(argv: list[str]) -> int:
     try:
         command = commands[argv[1]]
         return command(argv[2:]) if argv[1] in ("install", "markup") else command()
-    except (clipboard.ClipboardUnavailable, ocr.TesseractMissing, FileNotFoundError) as exc:
+    except Exception as exc:  # noqa: BLE001
+        # 由快捷键启动时没人看得见 stderr,静默失败比报错更糟。
+        # 通知在这里正合适:不需要按钮,而且会留在通知中心里等人看。
         print(f"错误：{exc}", file=sys.stderr)
+        if argv[1] in ("shot", "ocr", "markup"):
+            try:
+                notify.show("SnapOCR 出错了", str(exc), timeout_ms=8000)
+            except Exception:  # noqa: BLE001
+                pass
         return 1
 
 
