@@ -56,8 +56,16 @@ fn run() -> Result<bool> {
     let qh = queue.handle();
 
     let mut app = overlay::App::new(&globals, &qh)?;
-    // 让 OutputState 收齐 output 信息。
+    // 让 OutputState 收齐 output 信息。两次 roundtrip：第一次拿到 wl_output，
+    // 第二次才收齐它们的 mode/scale/logical_size 事件。
     queue.roundtrip(&mut app)?;
+    queue.roundtrip(&mut app)?;
+
+    if std::env::args().any(|a| a == "--outputs") {
+        app.report_outputs();
+        return Ok(true);
+    }
+
     let outputs = app.outputs();
     if outputs.is_empty() {
         anyhow::bail!("没有找到任何屏幕");

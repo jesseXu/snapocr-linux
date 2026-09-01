@@ -10,7 +10,7 @@
 
 use anyhow::{Context, Result};
 use smithay_client_toolkit::{
-    compositor::{CompositorHandler, CompositorState},
+    compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     delegate_registry,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
@@ -27,7 +27,7 @@ use smithay_client_toolkit::{
         },
         WaylandSurface,
     },
-    shm::{slot::SlotPool, Shm, ShmHandler},
+    shm::{slot::{Buffer, SlotPool}, Shm, ShmHandler},
 };
 use wayland_client::{
     globals::GlobalList,
@@ -64,6 +64,12 @@ struct Overlay {
     /// 渲染就绪的压暗像素，BGRX，尺寸同 shot。
     dim: Vec<u8>,
     pool: Option<SlotPool>,
+    /// 复用的缓冲。整屏 4K 一块就是 33MB，绝不能每帧新建。
+    buffer: Option<Buffer>,
+    /// 已请求帧回调、尚未收到。此时不再提交新帧。
+    frame_pending: bool,
+    /// 帧回调期间有新的鼠标位置，收到回调后需要补画一次。
+    dirty: bool,
     /// configure 给的逻辑尺寸。
     logical: (u32, u32),
     configured: bool,
@@ -89,6 +95,8 @@ pub struct App {
     layer_shell: LayerShell,
 
     overlays: Vec<Overlay>,
+    /// 各屏冻结像素的副本。浮层在退出时就拆掉了，但裁剪要用到，所以单独留一份。
+    shots: Vec<Shot>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
 
@@ -113,6 +121,7 @@ impl App {
             output_state: OutputState::new(globals, qh),
             seat_state: SeatState::new(globals, qh),
             overlays: Vec::new(),
+            shots: Vec::new(),
             keyboard: None,
             pointer: None,
             active: None,
@@ -125,6 +134,46 @@ impl App {
 
     pub fn outputs(&self) -> Vec<wl_output::WlOutput> {
         self.output_state.outputs().collect()
+    }
+
+    /// 诊断用：打印每块屏的物理模式、逻辑尺寸与缩放。
+    ///
+    /// buffer scale 必须整除，否则 layer surface 提交的缓冲尺寸与合成器
+    /// 配置的逻辑尺寸对不上，画面会被拉伸甚至触发协议错误。分数缩放
+    /// （fractional scaling）就属于对不上的情况。
+    pub fn report_outputs(&self) {
+        for (i, output) in self.output_state.outputs().enumerate() {
+            let Some(info) = self.output_state.info(&output) else {
+                println!("屏幕 {i}: 信息不可用");
+                continue;
+            };
+            let mode = info
+                .modes
+                .iter()
+                .find(|m| m.current)
+                .map(|m| format!("{}x{}", m.dimensions.0, m.dimensions.1))
+                .unwrap_or_else(|| "?".into());
+            let logical = info
+                .logical_size
+                .map(|(w, h)| format!("{w}x{h}"))
+                .unwrap_or_else(|| "?".into());
+            let integral = match (info.logical_size, info.modes.iter().find(|m| m.current)) {
+                (Some((lw, _)), Some(m)) if lw > 0 => {
+                    let r = m.dimensions.0 as f64 / lw as f64;
+                    if (r - r.round()).abs() < 1e-6 {
+                        format!("{}x（整除，OK）", r.round() as i32)
+                    } else {
+                        format!("{r:.3}x（非整数缩放，layer surface 会对不齐）")
+                    }
+                }
+                _ => "?".into(),
+            };
+            println!(
+                "屏幕 {i}: {} | 物理 {mode} | 逻辑 {logical} | wl_output scale {} | 换算 {integral}",
+                info.name.clone().unwrap_or_else(|| "?".into()),
+                info.scale_factor
+            );
+        }
     }
 
     /// 为每块屏挂一个铺满的浮层。顺序即 `Selection::output_index`。
@@ -146,12 +195,20 @@ impl App {
             layer.commit();
 
             let (bright, dim) = build_render_buffers(&shot);
+            self.shots.push(Shot {
+                width: shot.width,
+                height: shot.height,
+                pixels: shot.pixels.clone(),
+            });
             self.overlays.push(Overlay {
                 layer,
                 shot,
                 bright,
                 dim,
                 pool: None,
+                buffer: None,
+                frame_pending: false,
+                dirty: false,
                 logical: (0, 0),
                 configured: false,
             });
@@ -167,18 +224,19 @@ impl App {
         while !self.exit {
             queue.blocking_dispatch(self)?;
         }
-        // 明确撤下浮层，别让它在进程收尾期间还挂在屏幕上。
-        for o in &self.overlays {
-            o.layer.wl_surface().attach(None, 0, 0);
-            o.layer.wl_surface().commit();
+        // 撤下浮层。对 layer surface 提交 null buffer 属于可疑操作（各合成器行为不一），
+        // 正确做法是销毁 surface —— drop 会通过 SCTK 发出 destroy 请求。
+        let result = self.result;
+        self.overlays.clear();
+        if let Err(e) = conn.roundtrip() {
+            eprintln!("收尾 roundtrip 失败：{e}");
         }
-        let _ = conn.roundtrip();
-        Ok(self.result)
+        Ok(result)
     }
 
     /// 按选区裁出物理像素，输出 RGBA8。
     pub fn crop(&self, sel: &Selection) -> Shot {
-        let src = &self.overlays[sel.output_index].shot;
+        let src = &self.shots[sel.output_index];
         let mut pixels = Vec::with_capacity((sel.width * sel.height * 4) as usize);
         for row in 0..sel.height {
             let y = (sel.y + row) as usize;
@@ -226,32 +284,60 @@ impl App {
         Some((idx, x0, y0, x1 - x0, y1 - y0))
     }
 
-    fn draw(&mut self, index: usize) {
+    /// 渲染一帧。
+    ///
+    /// 两条约束：
+    /// 1. **缓冲必须复用**。4K 整屏一块缓冲 33MB，每帧新建会让 shm 池一路膨胀
+    ///    （高回报率鼠标每秒可产生上千个 motion 事件），最终撑爆合成器。
+    /// 2. **必须按帧回调节流**。没有节流就是每个 motion 事件提交一帧，
+    ///    远超显示器刷新率，纯属浪费且会加剧上面的问题。
+    fn draw(&mut self, qh: &QueueHandle<Self>, index: usize) {
         let sel = self.selection_px().filter(|(i, ..)| *i == index);
-        let o = &mut self.overlays[index];
-        if !o.configured {
-            return;
-        }
-        let (w, h) = (o.shot.width as i32, o.shot.height as i32);
+
+        let (w, h) = {
+            let o = &self.overlays[index];
+            if !o.configured {
+                return;
+            }
+            // 上一帧还没回调，先记脏，等回调时补画。
+            if o.frame_pending {
+                self.overlays[index].dirty = true;
+                return;
+            }
+            (o.shot.width as i32, o.shot.height as i32)
+        };
         let stride = w * 4;
         let len = (stride * h) as usize;
 
-        if o.pool.is_none() {
+        // 池的创建要借 &self.shm，必须赶在下面拿 overlays 的可变借用之前。
+        if self.overlays[index].pool.is_none() {
             match SlotPool::new(len, &self.shm) {
-                Ok(p) => o.pool = Some(p),
+                Ok(p) => self.overlays[index].pool = Some(p),
                 Err(e) => {
                     eprintln!("分配共享内存失败：{e}");
                     return;
                 }
             }
         }
+
+        let o = &mut self.overlays[index];
         let pool = o.pool.as_mut().unwrap();
-        let (buffer, canvas) = match pool.create_buffer(w, h, stride, wl_shm::Format::Xrgb8888) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("创建缓冲区失败：{e}");
-                return;
+
+        if o.buffer.is_none() {
+            match pool.create_buffer(w, h, stride, wl_shm::Format::Xrgb8888) {
+                Ok((b, _)) => o.buffer = Some(b),
+                Err(e) => {
+                    eprintln!("创建缓冲区失败：{e}");
+                    return;
+                }
             }
+        }
+        let buffer = o.buffer.as_ref().unwrap();
+
+        // 合成器还占着这块缓冲就跳过，等释放后由帧回调补画。
+        let Some(canvas) = buffer.canvas(pool) else {
+            o.dirty = true;
+            return;
         };
 
         // 底：整屏压暗。
@@ -274,18 +360,18 @@ impl App {
             }
         }
 
-        let surface = o.layer.wl_surface();
+        let surface = o.layer.wl_surface().clone();
         // buffer scale 必须让 物理缓冲 / scale == 逻辑尺寸，否则画面会被拉伸。
-        let bs = o.scale().round().max(1.0) as i32;
-        surface.set_buffer_scale(bs);
+        surface.set_buffer_scale(o.scale().round().max(1.0) as i32);
         surface.damage_buffer(0, 0, w, h);
-        // 不注册 frame 回调：拖拽时直接按指针事件重绘。合成器只取最新一次提交，
-        // 多提交的代价远小于漏一帧带来的拖影。
-        if let Err(e) = buffer.attach_to(surface) {
+        surface.frame(qh, FrameCallbackData(surface.clone()));
+        if let Err(e) = buffer.attach_to(&surface) {
             eprintln!("attach 缓冲区失败：{e}");
             return;
         }
         surface.commit();
+        o.frame_pending = true;
+        o.dirty = false;
     }
 }
 
@@ -321,7 +407,7 @@ impl LayerShellHandler for App {
     fn configure(
         &mut self,
         _: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
         layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _: u32,
@@ -334,7 +420,7 @@ impl LayerShellHandler for App {
             self.overlays[index].logical = (w, h);
         }
         self.overlays[index].configured = true;
-        self.draw(index);
+        self.draw(qh, index);
     }
 }
 
@@ -342,7 +428,7 @@ impl PointerHandler for App {
     fn pointer_frame(
         &mut self,
         _: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
         _: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
@@ -368,7 +454,7 @@ impl PointerHandler for App {
                 PointerEventKind::Motion { .. } => {
                     if self.press.is_some() && self.active == Some(index) {
                         self.current = Some((px, py));
-                        self.draw(index);
+                        self.draw(qh, index);
                     }
                 }
                 PointerEventKind::Press { button, .. } => {
