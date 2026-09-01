@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.jessezoo.snapocr</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>SnapOCR</name>
+  <summary>Region screenshot and text capture for COSMIC and Wayland</summary>
+  <description>
+    <p>
+      Select a region and the image goes straight to the clipboard; or select a
+      region and get its text in an editable window. Includes a small markup
+      editor with a pen, arrows and auto-numbered markers.
+    </p>
+    <p>
+      Capture uses the freedesktop standard ext-image-copy-capture-v1, so it works
+      on compositors such as cosmic-comp where grim (which needs the older
+      wlr-screencopy protocol) does not.
+    </p>
+  </description>
+  <launchable type="desktop-id">snapocr-shot.desktop</launchable>
+  <url type="homepage">https://github.com/jesseXu/snapocr</url>
+  <url type="bugtracker">https://github.com/jesseXu/snapocr/issues</url>
+  <provides>
+    <binary>snapocr</binary>
+    <binary>snapocr-shot</binary>
+  </provides>
+  <categories>
+    <category>Utility</category>
+    <category>Graphics</category>
+  </categories>
+  <releases>
+    <release version="0.1.0" date="2026-09-01"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

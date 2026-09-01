@@ -1,5 +1,12 @@
 # SnapOCR for Linux — 设计对齐文档
 
+> **Note for English readers:** this document is in Chinese. Its most reusable part
+> is §6 — a list of things that look like they should work on `cosmic-comp` but do
+> not (grim, non-interactive `cosmic-screenshot`, the GlobalShortcuts portal,
+> `gtk4-layer-shell`, `wl_surface` frame callbacks used for throttling), each with
+> the observed behaviour. §8 covers portability across compositors. Happy to
+> translate it if anyone wants it — open an issue.
+
 > 对齐日期：2026-09-01 ｜ 状态：第 1 步（snapocr-shot）已完成并实测通过
 > 参考实现：macOS 版 `~/dev/vibes/screenshot`（Swift/AppKit，已上架 Mac App Store）
 

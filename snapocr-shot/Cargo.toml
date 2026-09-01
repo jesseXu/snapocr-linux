@@ -2,7 +2,9 @@
 name = "snapocr-shot"
 version = "0.1.0"
 edition = "2021"
-description = "冻结抓屏 + 框选浮层，输出 PNG。为 cosmic-comp 等现代 Wayland 合成器补上 grim+slurp 的空缺。"
+description = "Region screenshot tool for Wayland compositors that speak ext-image-copy-capture-v1 (e.g. cosmic-comp), where grim does not work."
+license = "MIT"
+repository = "https://github.com/jesseXu/snapocr"
 
 [dependencies]
 wayland-client = "0.31"

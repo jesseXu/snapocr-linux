@@ -1,127 +1,132 @@
-# SnapOCR for Linux
+# SnapOCR
 
-Pop!_OS / COSMIC（Wayland）上的截图与取字小工具。macOS 版 SnapOCR 的
-Linux 实现 —— 保持使用体验，技术选型完全按 Linux 上顺手的方式来。
+A region screenshot and text-capture tool for **COSMIC** and other modern Wayland
+compositors. Select a region and the image is in your clipboard; or select a region
+and get its text in an editable window. Includes a small markup editor.
 
-设计与取舍见 [DESIGN.md](DESIGN.md)。
+[中文说明](README.zh-CN.md) · [Design notes](DESIGN.md)
 
-## 安装
+## Why this exists
+
+On `cosmic-comp` (Pop!_OS 24.04's COSMIC desktop) the usual Wayland screenshot
+tooling does not work: **`grim` speaks only `zwlr_screencopy_manager_v1`, which
+cosmic-comp does not implement.** It implements the newer freedesktop standard
+`ext-image-copy-capture-v1` instead. The bundled `cosmic-screenshot` only works
+through an interactive portal flow.
+
+So `snapocr-shot`, the capture half of this project, is essentially
+**`grim` + `slurp` for compositors that speak `ext-image-copy-capture-v1`** —
+and it is useful on its own, independently of the OCR and markup parts.
+
+## Features
+
+| Shortcut | What it does |
+| --- | --- |
+| `Ctrl+Alt+A` | Select a region — **the image goes straight to the clipboard** |
+| `Ctrl+Alt+S` | Select a region — OCR the text into an **editable** window |
+| `Ctrl+Alt+E` | Select a region — open it in the markup editor |
+
+- **Selection overlay**: the screen freezes and dims, the selection stays bright and
+  shows its pixel size live, crosshair cursor, `Esc` cancels.
+- **Toast**: after a capture a small overlay offers `S` to save and `E` to annotate.
+  It is drawn by the app itself, not by the notification daemon (see
+  [Design notes](DESIGN.md) for why). Pure icons and digits — nothing to translate.
+- **Markup editor**: freehand pen, arrows, and auto-numbered markers, six colours,
+  `Ctrl+Z` to undo. Copy and save re-render at the **original pixel resolution**,
+  so a 4K screenshot does not come out blurry.
+- **No background process.** Everything is a one-shot invocation; the shortcuts live
+  in the compositor's own config. Nothing to autostart, no tray icon.
+
+## Install
 
 ```bash
-# 从源码打包（需要 Rust 工具链）
-./scripts/build-deb.sh
+git clone https://github.com/jesseXu/snapocr.git
+cd snapocr
 
-# 安装。apt 会自动装齐 tesseract、wl-clipboard、GTK4 等所有依赖
-sudo apt install ./snapocr_0.1.0_amd64.deb
+./scripts/build-deb.sh                        # needs a Rust toolchain
+sudo apt install ./snapocr_0.1.0_amd64.deb    # apt pulls in tesseract, wl-clipboard, GTK4
 
-# 注册全局快捷键（用你自己的身份，不要加 sudo —— 快捷键写在你的用户配置里）
-snapocr install
+snapocr install                               # register the shortcuts — no sudo:
+                                              # they live in your user config
 ```
 
-装完 `snapocr` 就在 PATH 上，与源码目录再无关系，源码删掉也不影响。
+`snapocr doctor` checks that every dependency is present and prints the exact
+`apt install` line for anything missing. `sudo apt remove snapocr` uninstalls;
+`snapocr uninstall` removes the shortcuts.
 
-`snapocr doctor` 检查依赖是否齐全；`sudo apt remove snapocr` 卸载
-（快捷键需另外用 `snapocr uninstall` 清掉，因为它在用户配置里）。
+### Rebinding the shortcuts
 
-## 用法
-
-| 快捷键 | 做什么 |
-| --- | --- |
-| `Ctrl+Alt+A` | 框选 → **图片直接进剪贴板** → 通知里还可「保存到图片」或「标注」 |
-| `Ctrl+Alt+S` | 框选 → 识别文字 → **可编辑**的结果窗口，并自动全量复制 |
-| `Ctrl+Alt+E` | 框选 → **直接进标注编辑器** |
-
-框选浮层：冻结画面 + 整屏压暗，选区还原全亮并实时显示像素尺寸，
-十字光标，`Esc` 取消。
-
-截图后底部会浮出一条提示：剪贴板对勾图标 + 选区尺寸，下面是 `[S]` 存盘、
-`[E]` 标注两个键帽。4 秒自动消失，按其它任意键也会立刻消掉它。
-
-**界面一律英文，不做多语言。** toast 更进一步做成纯图标 + 数字，连英文都不需要。
-
-### 标注编辑器
-
-`Ctrl+Alt+E` 框选后直接进入；也可以从截图通知的「标注」按钮进入。
-错过了通知也不要紧：
-
-```bash
-snapocr markup                 # 重新框选一块来标注
-snapocr markup --clipboard     # 标注刚才复制进剪贴板的那张图
-snapocr markup ~/图片/a.png     # 标注已有文件
-```
-
-窗口上方一排是工具和颜色，三个工具按钮用的是图标：
-
-- **波浪线** = 钢笔 —— 按住拖动，自由手绘
-- **斜箭头** = 箭头 —— 从起点拖到终点，自动画出箭头头部
-- **红色 ① ** = 标记点 —— 单击放置一个红底白字的圆点，自动编号 1、2、3…
-- 六个色块切换颜色（标记点固定红色）
-
-图标是用编辑器自己的绘制函数画的 —— 图标就是该工具的真实笔迹。
-不走图标主题，因为主题里缺了对应图标时按钮会变成空白。
-
-| 按键 | 作用 |
-| --- | --- |
-| `Ctrl+Z` | 撤销上一笔 |
-| `Ctrl+C` | 复制到剪贴板并关闭 |
-| `Ctrl+S` | 保存到图片目录并关闭 |
-| `Esc` | 放弃并关闭 |
-
-复制和保存都按**原始像素**重绘，不会因为窗口是缩小显示的而变糊。
-
-### 改快捷键
-
-两种方式，任选：
-
-**在系统设置里改**（推荐）——「设置 → 键盘 → 键盘快捷键 → 自定义快捷键」，
-这三条会以「SnapOCR 截图」这样的名字列在那里，直接改键位即可。我们写入的
-就是 COSMIC 自己的自定义快捷键配置，所以它的原生界面完全认得。
-
-**用命令行重装**：
+Either edit them natively in **Settings → Keyboard → Keyboard Shortcuts → Custom
+Shortcuts** — the three entries appear there by name, because this tool writes
+COSMIC's own custom-shortcut config — or re-run install:
 
 ```bash
 snapocr install --shot "Super+Shift+A" --ocr "Super+Shift+S" --markup "Super+Shift+E"
 ```
 
-修饰键可写 `Ctrl` / `Alt` / `Shift` / `Super`（也认 `Control`、`Option`、`Cmd`、
-`Win` 这些别名）；键名用 xkbcommon 的名字，单个字母直接写，具名键如
-`F1`、`Print`、`Escape`。`snapocr status` 看当前注册情况。
+Modifiers are `Ctrl` / `Alt` / `Shift` / `Super` (aliases `Control`, `Option`, `Cmd`,
+`Win` also work); key names are xkbcommon keysyms. Existing custom shortcuts of yours
+are preserved, and the file is backed up before every write.
 
-写入前会自动备份，且只增删自己那几行，你已有的自定义快捷键不受影响。
-
-## 组成
-
-```
-snapocr-shot/     Rust。冻结抓屏(ext-image-copy-capture-v1)+ 框选浮层
-                  (zwlr_layer_shell_v1),输出 PNG。协议层的脏活都在这里。
-snapocr/          Python + GTK4。编排层:剪贴板、通知、OCR、结果窗、标注。
-packaging/        .desktop 文件
-scripts/          打包脚本
-```
-
-`snapocr-shot` 也可以单独用 —— 它本质上是「给 cosmic-comp 的 grim+slurp」，
-而这两个工具在 COSMIC 上都不可用（cosmic-comp 不提供 `wlr-screencopy`）：
+## Using `snapocr-shot` on its own
 
 ```bash
-snapocr-shot out.png      # 框选并保存
-snapocr-shot -            # 输出到 stdout
-snapocr-shot --outputs    # 打印各屏物理/逻辑尺寸与缩放
-snapocr-shot --full 目录   # 非交互整屏抓取（诊断用，不显示浮层）
-
-# 把 toast 离屏渲染成 PNG，用来调视觉。toast 独占键盘，一打字就会被消掉，
-# 没法靠抓屏验证，所以有这个离屏出口。
-snapocr-shot --toast-preview /tmp/t.png --state copied --body "1246 x 653"
+snapocr-shot out.png       # select a region, write a PNG
+snapocr-shot -             # ... to stdout
+snapocr-shot --outputs     # print each output's physical/logical size and scale
+snapocr-shot --full DIR    # non-interactive full-screen capture, one PNG per output
 ```
 
-## 不需要开机自启
+No OCR, no Python, no GTK — a single 1.9 MB binary that only needs a compositor
+speaking `ext-image-copy-capture-v1` and `zwlr_layer_shell_v1`.
 
-全部是一次性进程，快捷键注册在 COSMIC 配置里本身就是持久的，没有常驻
-进程要拉起。这是相对 macOS 版（常驻菜单栏）的架构简化，也因此不需要
-托盘图标。
+## Compatibility
 
-## 已知限制
+Only tested on COSMIC. Both protocols used are standard or de-facto standard rather
+than COSMIC-specific, so other compositors are plausible but unverified:
 
-- 仅在 COSMIC 上验证过。抓屏与浮层用的都是标准/准标准协议，理论上覆盖
-  wlroots 系与 KDE，但未实测；GNOME 需要另写一整条 portal 路径。见 DESIGN.md §8。
-- OCR 用 tesseract，准确率不及 macOS 的 Vision。结果窗口可编辑正是为此。
-- 选区不能跨屏。
+| Desktop | Capture | Overlay | Clipboard | Global shortcuts | Status |
+| --- | --- | --- | --- | --- | --- |
+| **COSMIC** | ext-image-copy-capture | layer-shell | data-control | COSMIC config | Tested |
+| **wlroots** (sway/hyprland/niri) | ext-image-copy-capture or wlr-screencopy | layer-shell | data-control | per-compositor config | Should work; needs a wlr-screencopy backend on older versions |
+| **KDE / KWin** | unverified | layer-shell | data-control | GlobalShortcuts portal | Capture needs verifying |
+| **GNOME** | portal only | no layer-shell | no data-control | GlobalShortcuts portal | Would need an entirely separate portal path |
+
+Global shortcuts cannot be abstracted away — Wayland has no client-side global
+hotkeys by design, so each desktop needs its own registration step.
+
+**This cannot be shipped as a Flatpak.** `cosmic-comp` gates both
+`ext-image-copy-capture` and `zwlr_layer_shell_v1` behind `client_not_sandboxed`,
+so a sandboxed client cannot see either protocol. That is a property of screen
+capture, not a packaging problem.
+
+## Architecture
+
+```
+snapocr-shot/   Rust. Frozen capture (ext-image-copy-capture-v1) and the
+                selection overlay + toast (zwlr_layer_shell_v1). All the
+                protocol-level work lives here.
+snapocr/        Python + GTK4. Orchestration: clipboard, OCR, result window,
+                markup editor, shortcut registration.
+```
+
+The split keeps the one genuinely tricky part quarantined in a small binary that
+rarely needs to change, while the parts whose behaviour gets iterated on stay in a
+language that is quick to edit.
+
+## Known limitations
+
+- OCR uses tesseract, which is less accurate than macOS's Vision framework.
+  The result window is editable precisely because of this — fix a mistake in place
+  rather than capturing again.
+- A selection cannot span two monitors.
+- The UI is English only; there is no localization and none is planned.
+
+## Credits
+
+A Linux port of a macOS menu-bar utility of the same name — the interaction design
+is carried over, the implementation is not.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

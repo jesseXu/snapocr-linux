@@ -21,12 +21,14 @@ mkdir -p "$STAGE/DEBIAN" \
          "$STAGE/usr/bin" \
          "$STAGE/usr/lib/python3/dist-packages/snapocr" \
          "$STAGE/usr/share/applications" \
+         "$STAGE/usr/share/metainfo" \
          "$STAGE/usr/share/doc/snapocr"
 
 install -m 755 target/release/snapocr-shot "$STAGE/usr/bin/snapocr-shot"
 install -m 644 snapocr/*.py "$STAGE/usr/lib/python3/dist-packages/snapocr/"
 install -m 644 packaging/*.desktop "$STAGE/usr/share/applications/"
-install -m 644 README.md DESIGN.md "$STAGE/usr/share/doc/snapocr/"
+install -m 644 packaging/*.metainfo.xml "$STAGE/usr/share/metainfo/"
+install -m 644 README.md DESIGN.md LICENSE "$STAGE/usr/share/doc/snapocr/"
 
 # 装好之后包已在 dist-packages，启动器不需要再设 PYTHONPATH。
 cat > "$STAGE/usr/bin/snapocr" <<'LAUNCHER'
