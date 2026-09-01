@@ -27,10 +27,14 @@ use smithay_client_toolkit::{
         },
         WaylandSurface,
     },
-    shm::{slot::{Buffer, SlotPool}, Shm, ShmHandler},
+    shm::{slot::SlotPool, Shm, ShmHandler},
+};
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
 use wayland_client::{
     globals::GlobalList,
+    Dispatch,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
     Connection, QueueHandle,
 };
@@ -64,8 +68,6 @@ struct Overlay {
     /// 渲染就绪的压暗像素，BGRX，尺寸同 shot。
     dim: Vec<u8>,
     pool: Option<SlotPool>,
-    /// 复用的缓冲。整屏 4K 一块就是 33MB，绝不能每帧新建。
-    buffer: Option<Buffer>,
     /// 已请求帧回调、尚未收到。此时不再提交新帧。
     frame_pending: bool,
     /// 帧回调期间有新的鼠标位置，收到回调后需要补画一次。
@@ -93,6 +95,10 @@ pub struct App {
     shm: Shm,
     compositor: CompositorState,
     layer_shell: LayerShell,
+    /// wp_cursor_shape：直接向合成器要一个十字光标，
+    /// 免去加载光标主题、找图片、管理 surface 那一整套。
+    cursor_shape: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    cursor_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
 
     overlays: Vec<Overlay>,
     /// 各屏冻结像素的副本。浮层在退出时就拆掉了，但裁剪要用到，所以单独留一份。
@@ -117,6 +123,9 @@ impl App {
             layer_shell: LayerShell::bind(globals, qh)
                 .context("合成器缺少 zwlr_layer_shell_v1")?,
             shm: Shm::bind(globals, qh).context("合成器缺少 wl_shm")?,
+            // 可选：没有就退回合成器默认光标，不影响主流程。
+            cursor_shape: globals.bind(qh, 1..=2, ()).ok(),
+            cursor_device: None,
             registry_state: RegistryState::new(globals),
             output_state: OutputState::new(globals, qh),
             seat_state: SeatState::new(globals, qh),
@@ -206,7 +215,6 @@ impl App {
                 bright,
                 dim,
                 pool: None,
-                buffer: None,
                 frame_pending: false,
                 dirty: false,
                 logical: (0, 0),
@@ -306,6 +314,8 @@ impl App {
             }
             (o.shot.width as i32, o.shot.height as i32)
         };
+        // 字号随屏幕缩放走，先算好——下面拿到 pool 的可变借用后就取不到 o 了。
+        let glyph = ((self.overlays[index].scale() * 2.0).round() as i64).max(2);
         let stride = w * 4;
         let len = (stride * h) as usize;
 
@@ -323,21 +333,16 @@ impl App {
         let o = &mut self.overlays[index];
         let pool = o.pool.as_mut().unwrap();
 
-        if o.buffer.is_none() {
-            match pool.create_buffer(w, h, stride, wl_shm::Format::Xrgb8888) {
-                Ok((b, _)) => o.buffer = Some(b),
-                Err(e) => {
-                    eprintln!("创建缓冲区失败：{e}");
-                    return;
-                }
+        // 每帧从池里取缓冲：SlotPool 会复用已被合成器释放的槽位。
+        // 不能改成「只建一块反复写」——合成器在收到新缓冲前不会释放旧的，
+        // 而我们又因它被占用而跳过绘制，于是选区框再也不刷新（单缓冲死锁）。
+        // 真正需要防的是无节制提交，那已由下面的帧回调解决。
+        let (buffer, canvas) = match pool.create_buffer(w, h, stride, wl_shm::Format::Xrgb8888) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("创建缓冲区失败：{e}");
+                return;
             }
-        }
-        let buffer = o.buffer.as_ref().unwrap();
-
-        // 合成器还占着这块缓冲就跳过，等释放后由帧回调补画。
-        let Some(canvas) = buffer.canvas(pool) else {
-            o.dirty = true;
-            return;
         };
 
         // 底：整屏压暗。
@@ -357,6 +362,7 @@ impl App {
                     canvas[a..b].copy_from_slice(&o.bright[a..b]);
                 }
                 draw_border(canvas, w as i64, h as i64, x0, y0, x1, y1);
+                draw_size_label(canvas, w as i64, h as i64, x0, y0, x1, sw, sh, glyph);
             }
         }
 
@@ -372,6 +378,92 @@ impl App {
         surface.commit();
         o.frame_pending = true;
         o.dirty = false;
+    }
+}
+
+/// 5x7 点阵字模：只要 0-9 和 ×。为画几个数字引入字体光栅化依赖
+/// （还要处理字体发现、fontconfig、CJK 回退）不划算。
+const GLYPHS: [(char, [u8; 7]); 11] = [
+    ('0', [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110]),
+    ('1', [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110]),
+    ('2', [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111]),
+    ('3', [0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110]),
+    ('4', [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010]),
+    ('5', [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110]),
+    ('6', [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110]),
+    ('7', [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000]),
+    ('8', [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110]),
+    ('9', [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100]),
+    ('x', [0b00000, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b00000]),
+];
+
+/// 在选区上方（放不下则下方）画出实时像素尺寸，如 `1920 x 1080`。
+#[allow(clippy::too_many_arguments)]
+fn draw_size_label(
+    canvas: &mut [u8],
+    w: i64,
+    h: i64,
+    x0: i64,
+    y0: i64,
+    _x1: i64,
+    sel_w: i64,
+    sel_h: i64,
+    scale: i64,
+) {
+    let text: Vec<char> = format!("{sel_w} x {sel_h}").chars().collect();
+    let pad = 3 * scale;
+    let text_w = text.len() as i64 * 6 * scale - scale;
+    let box_w = text_w + pad * 2;
+    let box_h = 7 * scale + pad * 2;
+
+    // 优先放选区上方；顶部放不下就改到选区内的上沿。
+    let bx = x0.min(w - box_w).max(0);
+    let by = if y0 - box_h - 2 * scale >= 0 {
+        y0 - box_h - 2 * scale
+    } else {
+        (y0 + 2 * scale).min(h - box_h).max(0)
+    };
+
+    // 半透明黑底：直接压暗底色，省掉 alpha 混合。
+    for y in by..(by + box_h).min(h) {
+        for x in bx..(bx + box_w).min(w) {
+            let i = ((y * w + x) * 4) as usize;
+            canvas[i] /= 4;
+            canvas[i + 1] /= 4;
+            canvas[i + 2] /= 4;
+        }
+    }
+
+    // 白色字形
+    let mut cx = bx + pad;
+    for ch in text {
+        if ch == ' ' {
+            cx += 6 * scale;
+            continue;
+        }
+        if let Some((_, rows)) = GLYPHS.iter().find(|(c, _)| *c == ch) {
+            for (ry, row) in rows.iter().enumerate() {
+                for rx in 0..5i64 {
+                    if row & (1 << (4 - rx)) == 0 {
+                        continue;
+                    }
+                    for sy in 0..scale {
+                        for sx in 0..scale {
+                            let px = cx + rx * scale + sx;
+                            let py = by + pad + ry as i64 * scale + sy;
+                            if px < 0 || py < 0 || px >= w || py >= h {
+                                continue;
+                            }
+                            let i = ((py * w + px) * 4) as usize;
+                            canvas[i] = 255;
+                            canvas[i + 1] = 255;
+                            canvas[i + 2] = 255;
+                        }
+                    }
+                }
+            }
+        }
+        cx += 6 * scale;
     }
 }
 
@@ -442,8 +534,11 @@ impl PointerHandler for App {
             };
             let (px, py) = event.position;
             match event.kind {
-                PointerEventKind::Enter { .. } => {
+                PointerEventKind::Enter { serial } => {
                     self.active = Some(index);
+                    if let Some(dev) = &self.cursor_device {
+                        dev.set_shape(serial, wp_cursor_shape_device_v1::Shape::Crosshair);
+                    }
                 }
                 PointerEventKind::Leave { .. } => {
                     // 拖拽中划出屏幕不该丢掉选区，只有没在拖时才清空。
@@ -585,6 +680,9 @@ impl SeatHandler for App {
             }
             Capability::Pointer if self.pointer.is_none() => {
                 if let Ok(p) = self.seat_state.get_pointer(qh, &seat) {
+                    if let Some(mgr) = &self.cursor_shape {
+                        self.cursor_device = Some(mgr.get_pointer(&p, qh, ()));
+                    }
                     self.pointer = Some(p);
                 }
             }
@@ -671,6 +769,30 @@ impl ProvidesRegistryState for App {
         &mut self.registry_state
     }
     registry_handlers![OutputState, SeatState];
+}
+
+impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+        _: wp_cursor_shape_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+        _: wp_cursor_shape_device_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 delegate_registry!(App);
