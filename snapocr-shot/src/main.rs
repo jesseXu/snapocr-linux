@@ -73,10 +73,10 @@ fn run() -> Result<bool> {
 
     // 先把所有屏冻结下来，再显示浮层——顺序反了就会把浮层自己拍进去。
     let mut shots = Vec::with_capacity(outputs.len());
-    for (i, output) in outputs.iter().enumerate() {
+    for (output, name) in &outputs {
         let shot = capture::capture_output(&conn, &globals, output)
-            .with_context(|| format!("抓取第 {} 块屏失败", i + 1))?;
-        shots.push((output.clone(), shot));
+            .with_context(|| format!("抓取屏幕 {name} 失败"))?;
+        shots.push((output.clone(), name.clone(), shot));
     }
 
     app.add_overlays(&qh, shots);

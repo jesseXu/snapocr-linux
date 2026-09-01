@@ -144,8 +144,22 @@ impl App {
         })
     }
 
-    pub fn outputs(&self) -> Vec<wl_output::WlOutput> {
-        self.output_state.outputs().collect()
+    /// 枚举屏幕，顺带把名字一并取出。
+    ///
+    /// 名字必须在这里取：抓屏阶段会另开事件队列，之后再按 proxy 反查
+    /// `output_state.info()` 会拿不到（实测名字变成 `?`）。
+    pub fn outputs(&self) -> Vec<(wl_output::WlOutput, String)> {
+        self.output_state
+            .outputs()
+            .map(|o| {
+                let name = self
+                    .output_state
+                    .info(&o)
+                    .and_then(|i| i.name)
+                    .unwrap_or_else(|| "?".into());
+                (o, name)
+            })
+            .collect()
     }
 
     /// 诊断用：打印每块屏的物理模式、逻辑尺寸与缩放。
@@ -189,13 +203,12 @@ impl App {
     }
 
     /// 为每块屏挂一个铺满的浮层。顺序即 `Selection::output_index`。
-    pub fn add_overlays(&mut self, qh: &QueueHandle<Self>, shots: Vec<(wl_output::WlOutput, Shot)>) {
-        for (output, shot) in shots {
-            let name = self
-                .output_state
-                .info(&output)
-                .and_then(|i| i.name)
-                .unwrap_or_else(|| "?".into());
+    pub fn add_overlays(
+        &mut self,
+        qh: &QueueHandle<Self>,
+        shots: Vec<(wl_output::WlOutput, String, Shot)>,
+    ) {
+        for (output, name, shot) in shots {
             let surface = self.compositor.create_surface(qh);
             let layer = self.layer_shell.create_layer_surface(
                 qh,

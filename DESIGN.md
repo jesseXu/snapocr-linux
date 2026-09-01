@@ -1,6 +1,6 @@
 # SnapOCR for Linux — 设计对齐文档
 
-> 对齐日期：2026-09-01 ｜ 状态：设计已对齐，未开工
+> 对齐日期：2026-09-01 ｜ 状态：第 1 步（snapocr-shot）已完成并实测通过
 > 参考实现：macOS 版 `~/dev/vibes/screenshot`（Swift/AppKit，已上架 Mac App Store）
 
 ---
@@ -127,9 +127,20 @@ COSMIC 自定义快捷键 (Spawn)
 | Qt 浮层（备选） | `layer-shell-qt` / `liblayershellqtinterface5` 已打包 |
 | 工具链 | rustc/cargo 1.95、gcc 13.3、python 3.12；crates.io 与 pypi 均可达 |
 
-### 尚未验证（开工时先确认）
+### 实现 snapocr-shot 时新踩到的坑（全部已实测）
 
-- `ext-image-copy-capture` 对非特权客户端是否放行（cosmic-comp 是否有 security-context 限制）
+| 坑 | 实情 |
+| --- | --- |
+| shm 像素格式 | cosmic-comp 只给 `Xbgr8888` / `Abgr8888`，**不给** `Xrgb8888`。只认后者会直接失败 |
+| 格式名的含义 | `wl_shm` 格式名描述的是**主机字节序下 32 位整数**的通道排列，不是内存字节序。小端机上二者相反：`Xrgb8888` 内存序是 B,G,R,X 而 `Xbgr8888` 是 R,G,B,X。按名字想当然会得到蓝红颠倒的图，且不会报错 |
+| `wl_surface` frame 回调 | **cosmic-comp 上收不到**。用它做渲染节流会在第一帧后永久卡住（屏幕变暗但选区框再不刷新）。改用时间节流 |
+| 单块缓冲复用 | 会死锁：合成器在收到新缓冲前不 release 旧的，而客户端又因它被占用而跳过绘制。应每帧从 `SlotPool` 取（池自会复用已释放槽位），靠节流控制提交频率 |
+| output 枚举顺序 | **跨运行不稳定**，两次运行 `HDMI-A-1` / `HDMI-A-2` 的下标会互换。不能用下标标识屏幕，一律用名字 |
+| output 名字的获取时机 | 必须在枚举时一并取出。抓屏阶段会另开事件队列，之后再按 proxy 反查 `output_state.info()` 会拿不到 |
+| `wp_cursor_shape_manager_v1` | 可用，一行拿到十字光标。mac 版为此写了「定时器反复 set」的 hack，这边反而干净 |
+
+### 仍未验证（后续步骤再确认）
+
 - COSMIC 自定义快捷键配置文件的**确切 RON 语法**（`~/.config/cosmic/com.system76.CosmicSettings.Shortcuts/v1/custom`，当前为空目录；`Spawn` 动作与 `custom` 键名已从二进制确认存在）
 - tesseract 在真实屏幕区域（小字号、深色背景）上的实际准确率
 - portal Screenshot 交互模式的行为（未测，会弹 UI）
@@ -166,7 +177,9 @@ COSMIC 自定义快捷键 (Spawn)
 
 ## 9. 落地顺序
 
-1. **`snapocr-shot`** —— 冻结抓屏 + 暗化框选浮层，输出 PNG。**唯一有技术风险、也唯一没有现成替代品的部分，先做掉风险就没了。**
+1. ~~**`snapocr-shot`** —— 冻结抓屏 + 暗化框选浮层，输出 PNG。~~ **✅ 已完成**
+   实测：双屏 3840x2160 + 2560x2880，抓屏各约 300ms；框选、裁剪、十字光标、
+   实时尺寸标签均可用；看门狗与 `--outputs` 诊断就位；编译零警告。
 2. **截图流程闭环** —— `wl-copy` + toast + 存盘。到这一步就已经日常可用。
 3. **取字流程** —— tesseract + 文本窗口。逻辑上最简单。
 4. **标注编辑器** —— macOS 版那 374 行是纯几何逻辑，与平台无关，可近乎直译。
