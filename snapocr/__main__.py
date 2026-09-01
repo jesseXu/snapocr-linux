@@ -9,7 +9,7 @@ from __future__ import annotations
 import struct
 import sys
 
-from . import clipboard, notify, paths, shot
+from . import clipboard, notify, ocr, paths, shot, textwindow
 
 
 def png_size(data: bytes) -> tuple[int, int]:
@@ -42,8 +42,13 @@ def cmd_shot() -> int:
 
 
 def cmd_ocr() -> int:
-    print("取字流程尚未实现（落地顺序第 3 步）", file=sys.stderr)
-    return 1
+    try:
+        png = shot.select_region()
+    except shot.Cancelled:
+        return 0
+    # 窗口先出来、识别在后台跑：识别要几百毫秒到数秒，
+    # 先给反馈才不会让人以为快捷键没生效。
+    return textwindow.show(lambda: ocr.recognize(png))
 
 
 def main(argv: list[str]) -> int:
@@ -53,7 +58,7 @@ def main(argv: list[str]) -> int:
         return 64
     try:
         return commands[argv[1]]()
-    except (clipboard.ClipboardUnavailable, FileNotFoundError) as exc:
+    except (clipboard.ClipboardUnavailable, ocr.TesseractMissing, FileNotFoundError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 
