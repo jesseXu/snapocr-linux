@@ -10,7 +10,7 @@
 
 use anyhow::{Context, Result};
 use smithay_client_toolkit::{
-    compositor::{CompositorHandler, CompositorState, FrameCallbackData},
+    compositor::{CompositorHandler, CompositorState},
     delegate_registry,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
@@ -57,6 +57,8 @@ const DIM_KEEP: u32 = 140; // 亮度 * 140/255 ≈ 0.55
 const BORDER: i64 = 2;
 /// 边框颜色（B, G, R）——COSMIC 强调色近似的蓝。
 const BORDER_BGR: [u8; 3] = [0xE0, 0x90, 0x30];
+/// 两帧之间的最小间隔（约 120fps）。
+const MIN_FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_millis(8);
 /// 小于这个尺寸（物理像素）视为误点，不算选区。
 const MIN_SELECTION: u32 = 3;
 
@@ -68,10 +70,11 @@ struct Overlay {
     /// 渲染就绪的压暗像素，BGRX，尺寸同 shot。
     dim: Vec<u8>,
     pool: Option<SlotPool>,
-    /// 已请求帧回调、尚未收到。此时不再提交新帧。
-    frame_pending: bool,
-    /// 帧回调期间有新的鼠标位置，收到回调后需要补画一次。
-    dirty: bool,
+    /// 上次提交时间，用于节流。
+    last_draw: Option<std::time::Instant>,
+    /// 屏幕名（HDMI-A-1 等）。output 的枚举顺序在不同运行间并不稳定，
+    /// 用下标标识屏幕会误导人，日志一律打名字。
+    name: String,
     /// configure 给的逻辑尺寸。
     logical: (u32, u32),
     configured: bool,
@@ -188,6 +191,11 @@ impl App {
     /// 为每块屏挂一个铺满的浮层。顺序即 `Selection::output_index`。
     pub fn add_overlays(&mut self, qh: &QueueHandle<Self>, shots: Vec<(wl_output::WlOutput, Shot)>) {
         for (output, shot) in shots {
+            let name = self
+                .output_state
+                .info(&output)
+                .and_then(|i| i.name)
+                .unwrap_or_else(|| "?".into());
             let surface = self.compositor.create_surface(qh);
             let layer = self.layer_shell.create_layer_surface(
                 qh,
@@ -215,8 +223,8 @@ impl App {
                 bright,
                 dim,
                 pool: None,
-                frame_pending: false,
-                dirty: false,
+                last_draw: None,
+                name,
                 logical: (0, 0),
                 configured: false,
             });
@@ -240,6 +248,14 @@ impl App {
             eprintln!("收尾 roundtrip 失败：{e}");
         }
         Ok(result)
+    }
+
+    /// 选区所在屏幕的名字。
+    pub fn output_name(&self, sel: &Selection) -> String {
+        self.overlays
+            .get(sel.output_index)
+            .map(|o| o.name.clone())
+            .unwrap_or_else(|| "?".into())
     }
 
     /// 按选区裁出物理像素，输出 RGBA8。
@@ -299,7 +315,7 @@ impl App {
     ///    （高回报率鼠标每秒可产生上千个 motion 事件），最终撑爆合成器。
     /// 2. **必须按帧回调节流**。没有节流就是每个 motion 事件提交一帧，
     ///    远超显示器刷新率，纯属浪费且会加剧上面的问题。
-    fn draw(&mut self, qh: &QueueHandle<Self>, index: usize) {
+    fn draw(&mut self, index: usize) {
         let sel = self.selection_px().filter(|(i, ..)| *i == index);
 
         let (w, h) = {
@@ -307,10 +323,17 @@ impl App {
             if !o.configured {
                 return;
             }
-            // 上一帧还没回调，先记脏，等回调时补画。
-            if o.frame_pending {
-                self.overlays[index].dirty = true;
-                return;
+            // 节流：拖拽时高回报率鼠标每秒可产生上千个 motion 事件，
+            // 不限速就是每个事件提交一帧，远超刷新率且会让 shm 池堆积。
+            //
+            // 这里刻意用时间而非 wl_surface 的 frame 回调：回调式节流一旦
+            // 收不到回调就会永久卡住（实测 cosmic-comp 上就没回来，表现为
+            // 屏幕变暗后选区框再也不刷新），而按时间节流结构上不可能死锁，
+            // 跨合成器也更稳。
+            if let Some(t) = o.last_draw {
+                if t.elapsed() < MIN_FRAME_INTERVAL {
+                    return;
+                }
             }
             (o.shot.width as i32, o.shot.height as i32)
         };
@@ -370,14 +393,12 @@ impl App {
         // buffer scale 必须让 物理缓冲 / scale == 逻辑尺寸，否则画面会被拉伸。
         surface.set_buffer_scale(o.scale().round().max(1.0) as i32);
         surface.damage_buffer(0, 0, w, h);
-        surface.frame(qh, FrameCallbackData(surface.clone()));
         if let Err(e) = buffer.attach_to(&surface) {
             eprintln!("attach 缓冲区失败：{e}");
             return;
         }
         surface.commit();
-        o.frame_pending = true;
-        o.dirty = false;
+        o.last_draw = Some(std::time::Instant::now());
     }
 }
 
@@ -512,7 +533,7 @@ impl LayerShellHandler for App {
             self.overlays[index].logical = (w, h);
         }
         self.overlays[index].configured = true;
-        self.draw(qh, index);
+        self.draw(index);
     }
 }
 
@@ -549,7 +570,7 @@ impl PointerHandler for App {
                 PointerEventKind::Motion { .. } => {
                     if self.press.is_some() && self.active == Some(index) {
                         self.current = Some((px, py));
-                        self.draw(qh, index);
+                        self.draw(index);
                     }
                 }
                 PointerEventKind::Press { button, .. } => {

@@ -86,8 +86,12 @@ fn run() -> Result<bool> {
 
     let cropped = app.crop(&sel);
     eprintln!(
-        "选区：屏幕 {} 的 {}x{} @ ({}, {})",
-        sel.output_index, cropped.width, cropped.height, sel.x, sel.y
+        "选区：{} 上 {}x{} @ ({}, {})",
+        app.output_name(&sel),
+        cropped.width,
+        cropped.height,
+        sel.x,
+        sel.y
     );
 
     if out_path == "-" {
