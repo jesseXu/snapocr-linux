@@ -44,6 +44,12 @@ and it is useful on its own, independently of the OCR and markup parts.
 - **Markup editor**: freehand pen, arrows, and auto-numbered markers, six colours,
   `Ctrl+Z` to undo. Copy and save re-render at the **original pixel resolution**,
   so a 4K screenshot does not come out blurry.
+
+  ![Markup editor](docs/markup.png)
+
+  The three tool buttons are drawn by the editor's own drawing code, so each icon
+  is literally the stroke that tool produces.
+
 - **No background process.** Everything is a one-shot invocation; the shortcuts live
   in the compositor's own config. Nothing to autostart, no tray icon.
 
