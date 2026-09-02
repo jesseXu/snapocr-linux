@@ -4,17 +4,7 @@ A region screenshot and text-capture tool for **COSMIC** and other modern Waylan
 compositors. Select a region and the image is in your clipboard; or select a region
 and get its text in an editable window. Includes a small markup editor.
 
-[中文说明](README.zh-CN.md) · [Design notes](DESIGN.md)
-
-![Selection overlay](docs/overlay.png)
-
-The screen freezes and dims; the selection stays bright and shows its pixel size live.
-Let go and the image is on your clipboard.
-
-![Toast](docs/toast.png)
-
-A toast then offers `S` to save and `E` to annotate. It is drawn by the app itself
-rather than by the notification daemon — see [Design notes](DESIGN.md) for why.
+[中文说明](README.zh-CN.md) · [Design notes](DESIGN.md) · [Screenshots](#screenshots)
 
 ## Why this exists
 
@@ -44,11 +34,6 @@ and it is useful on its own, independently of the OCR and markup parts.
 - **Markup editor**: freehand pen, arrows, and auto-numbered markers, six colours,
   `Ctrl+Z` to undo. Copy and save re-render at the **original pixel resolution**,
   so a 4K screenshot does not come out blurry.
-
-  ![Markup editor](docs/markup.png)
-
-  The three tool buttons are drawn by the editor's own drawing code, so each icon
-  is literally the stroke that tool produces.
 
 - **No background process.** Everything is a one-shot invocation; the shortcuts live
   in the compositor's own config. Nothing to autostart, no tray icon.
@@ -152,3 +137,26 @@ is carried over, the implementation is not.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Screenshots
+
+### Selection overlay
+
+![Selection overlay](docs/overlay.png)
+
+The screen freezes and dims; the selection stays bright and shows its pixel size
+live. Let go and the image is already on the clipboard.
+
+### Markup editor
+
+![Markup editor](docs/markup.png)
+
+The three tool buttons are drawn by the editor's own drawing code, so each icon is
+literally the stroke that tool produces.
+
+### Recognized text
+
+![Recognized text](docs/ocr.png)
+
+Reading its own README. The text is editable — fix an OCR slip in place instead of
+capturing again.
