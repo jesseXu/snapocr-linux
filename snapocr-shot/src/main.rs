@@ -77,6 +77,38 @@ fn run() -> Result<bool> {
         return Ok(true);
     }
 
+    // 离屏渲染框选浮层成 PNG（文档配图用）：抓当前屏 → 走真实绘制路径。
+    if let Some(path) = arg_value("--overlay-preview") {
+        let rect: Vec<i64> = arg_value("--selection")
+            .unwrap_or_else(|| "0,0,0,0".into())
+            .split(',')
+            .filter_map(|v| v.trim().parse().ok())
+            .collect();
+        anyhow::ensure!(rect.len() == 4, "--selection 需要 x,y,w,h 四个数");
+        let outputs = app.outputs();
+        let which = arg_value("--output").unwrap_or_default();
+        let (output, name) = outputs
+            .iter()
+            .find(|(_, n)| which.is_empty() || *n == which)
+            .context("找不到指定的屏幕")?;
+        let shot = capture::capture_output(&conn, &globals, output)
+            .with_context(|| format!("failed to capture output {name}"))?;
+        let scale: i64 = arg_value("--scale").and_then(|v| v.parse().ok()).unwrap_or(4);
+        let mut data =
+            overlay::render_overlay_preview(&shot, (rect[0], rect[1], rect[2], rect[3]), scale);
+        for px in data.chunks_exact_mut(4) {
+            px.swap(0, 2); // BGRA -> RGBA
+        }
+        let file = std::fs::File::create(&path)?;
+        let mut enc =
+            png::Encoder::new(std::io::BufWriter::new(file), shot.width, shot.height);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header()?.write_image_data(&data)?;
+        println!("{path}  ({}x{})", shot.width, shot.height);
+        return Ok(true);
+    }
+
     // 离屏渲染 toast 成 PNG：调视觉时不必真的占屏幕和键盘
     // （toast 独占键盘，用户一打字就会把它消掉，根本没法靠抓屏验证）。
     if let Some(path) = arg_value("--toast-preview") {

@@ -6,6 +6,16 @@ and get its text in an editable window. Includes a small markup editor.
 
 [中文说明](README.zh-CN.md) · [Design notes](DESIGN.md)
 
+![Selection overlay](docs/overlay.png)
+
+The screen freezes and dims; the selection stays bright and shows its pixel size live.
+Let go and the image is on your clipboard.
+
+![Toast](docs/toast.png)
+
+A toast then offers `S` to save and `E` to annotate. It is drawn by the app itself
+rather than by the notification daemon — see [Design notes](DESIGN.md) for why.
+
 ## Why this exists
 
 On `cosmic-comp` (Pop!_OS 24.04's COSMIC desktop) the usual Wayland screenshot
@@ -75,6 +85,12 @@ snapocr-shot out.png       # select a region, write a PNG
 snapocr-shot -             # ... to stdout
 snapocr-shot --outputs     # print each output's physical/logical size and scale
 snapocr-shot --full DIR    # non-interactive full-screen capture, one PNG per output
+
+# Render the UI off-screen, for documentation and for tweaking the visuals.
+# The toast grabs the keyboard and any keypress dismisses it, so it cannot be
+# screenshotted while it is up; these render through the real drawing code instead.
+snapocr-shot --toast-preview t.png --state copied --body "2400 x 1100"
+snapocr-shot --overlay-preview o.png --selection "700,320,2400,1100"
 ```
 
 No OCR, no Python, no GTK — a single 1.9 MB binary that only needs a compositor

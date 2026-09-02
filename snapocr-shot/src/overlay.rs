@@ -551,6 +551,29 @@ fn draw_size_label(
     );
 }
 
+/// 把框选浮层画进一块 BGRA 缓冲：整屏压暗 + 选区还原全亮 + 边框 + 尺寸标签。
+/// 与 Wayland 无关，用于 `--overlay-preview` 生成文档配图 —— 走的是和真实
+/// 浮层完全相同的绘制路径，图和实际效果不会走样。
+pub fn render_overlay_preview(
+    shot: &Shot, sel: (i64, i64, i64, i64), scale: i64,
+) -> Vec<u8> {
+    let (bright, dim) = build_render_buffers(shot);
+    let (w, h) = (shot.width as i64, shot.height as i64);
+    let mut canvas = dim;
+    let (sx, sy, sw, sh) = sel;
+    let (x0, y0) = (sx.clamp(0, w), sy.clamp(0, h));
+    let (x1, y1) = ((sx + sw).clamp(0, w), (sy + sh).clamp(0, h));
+    for y in y0..y1 {
+        let row = (y * w) as usize * 4;
+        let a = row + x0 as usize * 4;
+        let b = row + x1 as usize * 4;
+        canvas[a..b].copy_from_slice(&bright[a..b]);
+    }
+    draw_border(&mut canvas, w, h, x0, y0, x1, y1);
+    draw_size_label(&mut canvas, w, h, x0, y0, x1, sw, sh, scale);
+    canvas
+}
+
 /// 把 toast 画进一块 BGRA 缓冲。与 Wayland 无关，故也用于 `--toast-preview`
 /// 离屏渲染 —— 调 toast 做视觉验证时不必真的占用屏幕和键盘。
 pub fn render_toast(data: &mut [u8], w: i32, h: i32, s: f32, copied: bool, body: &str) {
